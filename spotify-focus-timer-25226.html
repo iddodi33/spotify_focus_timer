@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Focus Timer - Spotify</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Space+Mono:wght@400;700&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --bg-dark: #0a0e27;
+            --bg-card: #151b3d;
+            --accent: #1db954;
+            --accent-glow: rgba(29, 185, 84, 0.3);
+            --text: #e8eaed;
+            --text-dim: #8b93a7;
+            --break-color: #f59e0b;
+            --break-glow: rgba(245, 158, 11, 0.3);
+        }
+        
+        body {
+            font-family: 'DM Mono', monospace;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            background-image: 
+                radial-gradient(circle at 20% 30%, rgba(29, 185, 84, 0.08) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(245, 158, 11, 0.05) 0%, transparent 50%);
+        }
+        
+        .container {
+            max-width: 600px;
+            width: 100%;
+        }
+        
+        .card {
+            background: var(--bg-card);
+            border-radius: 24px;
+            padding: 3rem;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        h1 {
+            font-family: 'Space Mono', monospace;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent) 0%, #1ed760 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .subtitle {
+            color: var(--text-dim);
+            margin-bottom: 2rem;
+            font-size: 0.95rem;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 2rem;
+            margin: 2rem 0;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 2px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.3s ease;
+        }
+        
+        .status.active {
+            border-color: var(--accent);
+            background: var(--accent-glow);
+            box-shadow: 0 0 30px var(--accent-glow);
+        }
+        
+        .status.break {
+            border-color: var(--break-color);
+            background: var(--break-glow);
+            box-shadow: 0 0 30px var(--break-glow);
+        }
+        
+        .status-label {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--text-dim);
+            margin-bottom: 0.5rem;
+        }
+        
+        .status.active .status-label {
+            color: var(--accent);
+        }
+        
+        .status.break .status-label {
+            color: var(--break-color);
+        }
+        
+        .status-text {
+            font-family: 'Space Mono', monospace;
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+        
+        .status-detail {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+        }
+        
+        .progress-container {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 1.5rem;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            width: 100%;
+            background: var(--accent);
+            border-radius: 4px;
+            transition: width 1s linear;
+        }
+        
+        .status.break .progress-bar {
+            background: var(--break-color);
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 1.25rem;
+            font-family: 'Space Mono', monospace;
+            font-size: 1rem;
+            font-weight: 700;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            color: #000;
+            box-shadow: 0 4px 20px var(--accent-glow);
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px var(--accent-glow);
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-top: 1rem;
+        }
+        
+        .btn-secondary:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.08);
+        }
+        
+        .info {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 12px;
+            border-left: 3px solid var(--accent);
+        }
+        
+        .info-title {
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .info-text {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            line-height: 1.6;
+        }
+        
+        .sessions-completed {
+            text-align: center;
+            margin-top: 2rem;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 12px;
+        }
+        
+        .sessions-count {
+            font-family: 'Space Mono', monospace;
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        
+        .sessions-label {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .settings {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        .setting-group {
+            margin-bottom: 1rem;
+        }
+        
+        .setting-group:last-child {
+            margin-bottom: 0;
+        }
+        
+        .setting-group label {
+            display: block;
+            font-size: 0.9rem;
+            color: var(--text);
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+        
+        .setting-group input[type="number"] {
+            width: 100%;
+            padding: 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: var(--text);
+            font-family: 'DM Mono', monospace;
+            font-size: 1rem;
+        }
+        
+        .setting-group input[type="number"]:focus {
+            outline: none;
+            border-color: var(--accent);
+            background: rgba(255, 255, 255, 0.08);
+        }
+        
+        #login-section, #app-section {
+            display: none;
+        }
+        
+        .show {
+            display: block !important;
+        }
+        
+        .error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #fca5a5;
+            padding: 1rem;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .pulse {
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>Focus Timer</h1>
+            <p class="subtitle">Spotify-powered productivity sessions</p>
+            
+            <div id="login-section">
+                <div class="info">
+                    <div class="info-title">How it works</div>
+                    <div class="info-text">
+                        Connect your Spotify account to start 30-minute focus sessions. 
+                        Create two playlists: one called "Focus" with your work music, 
+                        and one called "Break" with your break music. The app will automatically 
+                        switch between them.
+                    </div>
+                </div>
+                <button id="login-btn" class="btn btn-primary">Connect Spotify</button>
+            </div>
+            
+            <div id="app-section">
+                <div id="error-msg" class="error" style="display: none;"></div>
+                
+                <div class="settings">
+                    <div class="setting-group">
+                        <label for="focus-duration">Focus Duration (minutes):</label>
+                        <input type="number" id="focus-duration" min="1" max="120" value="30">
+                    </div>
+                    <div class="setting-group">
+                        <label for="break-duration">Break Duration (minutes):</label>
+                        <input type="number" id="break-duration" min="1" max="60" value="5">
+                    </div>
+                </div>
+                
+                <div id="status-display" class="status">
+                    <div class="status-label">Status</div>
+                    <div class="status-text">Ready to Focus</div>
+                    <div class="status-detail">Click start to begin your session</div>
+                    <div class="progress-container">
+                        <div class="progress-bar" id="progress-bar"></div>
+                    </div>
+                </div>
+                
+                <button id="start-btn" class="btn btn-primary">Start Focus Session</button>
+                <button id="stop-btn" class="btn btn-secondary" style="display: none;">Stop Session</button>
+                
+                <div class="sessions-completed">
+                    <div class="sessions-count" id="session-count">0</div>
+                    <div class="sessions-label">Sessions Completed Today</div>
+                </div>
+                
+                <div class="info">
+                    <div class="info-title">Session Flow</div>
+                    <div class="info-text">
+                        🎵 Focus session with your Focus playlist<br>
+                        🔔 Voice: "Work session is done, time to take a break"<br>
+                        ☕ Break session with your Break playlist<br>
+                        🔔 Voice: "Break is over, back to focus"<br>
+                        🔄 Automatically repeats
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Spotify API Configuration - REPLACE WITH YOUR CLIENT ID
+        const CLIENT_ID = '8e34dc8a40374855a3c8e3064e271405';
+        const REDIRECT_URI = window.location.origin + window.location.pathname;
+        const SCOPES = 'user-read-playback-state user-modify-playback-state playlist-read-private playlist-read-collaborative';
+        
+        // Session Configuration
+        const FOCUS_DURATION = 30 * 60 * 1000; // Default 30 minutes
+        const BREAK_DURATION = 5 * 60 * 1000; // Default 5 minutes
+        const COMM_DURATION = 30 * 60 * 1000; // 30 minutes
+        const COMM_WARNING_TIME = 3 * 60 * 1000; // 3 minutes before end
+        
+        // Communication slots (times in 24-hour format)
+        const COMM_SLOTS = [
+            { hour: 9, minute: 0 },   // 9:00 AM
+            { hour: 12, minute: 30 }, // 12:30 PM
+            { hour: 14, minute: 0 },  // 2:00 PM
+            { hour: 15, minute: 30 }  // 3:30 PM
+        ];
+        
+        let accessToken = null;
+        let sessionTimer = null;
+        let sessionCount = 0;
+        let isInSession = false;
+        let focusPlaylistId = null;
+        let breakPlaylistId = null;
+        let progressInterval = null;
+        let sessionStartTime = null;
+        let sessionDuration = null;
+        let commCheckInterval = null;
+        let currentCommSlot = null;
+        let commWarningShown = false;
+        
+        // DOM Elements
+        const loginSection = document.getElementById('login-section');
+        const appSection = document.getElementById('app-section');
+        const loginBtn = document.getElementById('login-btn');
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const statusDisplay = document.getElementById('status-display');
+        const statusLabel = statusDisplay.querySelector('.status-label');
+        const statusText = statusDisplay.querySelector('.status-text');
+        const statusDetail = statusDisplay.querySelector('.status-detail');
+        const sessionCountEl = document.getElementById('session-count');
+        const errorMsg = document.getElementById('error-msg');
+        const focusDurationInput = document.getElementById('focus-duration');
+        const breakDurationInput = document.getElementById('break-duration');
+        const progressBar = document.getElementById('progress-bar');
+        
+        // PKCE Helper Functions
+        function generateRandomString(length) {
+            const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            const values = crypto.getRandomValues(new Uint8Array(length));
+            return values.reduce((acc, x) => acc + possible[x % possible.length], "");
+        }
+
+        async function sha256(plain) {
+            const encoder = new TextEncoder()
+            const data = encoder.encode(plain)
+            return window.crypto.subtle.digest('SHA-256', data)
+        }
+
+        function base64encode(input) {
+            return btoa(String.fromCharCode(...new Uint8Array(input)))
+                .replace(/=/g, '')
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_');
+        }
+        
+        // Initialize
+        async function init() {
+            // Check if we're returning from Spotify auth
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            
+            if (code) {
+                // Exchange code for access token
+                await exchangeCodeForToken(code);
+                // Clean URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else if (localStorage.getItem('spotify_token')) {
+                accessToken = localStorage.getItem('spotify_token');
+                showApp();
+                await initializeApp();
+            } else {
+                loginSection.classList.add('show');
+            }
+            
+            // Load session count
+            const savedCount = localStorage.getItem('session_count_' + new Date().toDateString());
+            sessionCount = savedCount ? parseInt(savedCount) : 0;
+            updateSessionCount();
+        }
+        
+        // Show app section
+        function showApp() {
+            loginSection.classList.remove('show');
+            appSection.classList.add('show');
+        }
+        
+        // Spotify Authentication with PKCE
+        loginBtn.addEventListener('click', async () => {
+            const codeVerifier = generateRandomString(64);
+            const hashed = await sha256(codeVerifier);
+            const codeChallenge = base64encode(hashed);
+            
+            // Store code verifier for later
+            localStorage.setItem('code_verifier', codeVerifier);
+            
+            const authUrl = new URL('https://accounts.spotify.com/authorize');
+            authUrl.searchParams.append('client_id', CLIENT_ID);
+            authUrl.searchParams.append('response_type', 'code');
+            authUrl.searchParams.append('redirect_uri', REDIRECT_URI);
+            authUrl.searchParams.append('scope', SCOPES);
+            authUrl.searchParams.append('code_challenge_method', 'S256');
+            authUrl.searchParams.append('code_challenge', codeChallenge);
+            
+            window.location.href = authUrl.toString();
+        });
+        
+        // Exchange authorization code for access token
+        async function exchangeCodeForToken(code) {
+            const codeVerifier = localStorage.getItem('code_verifier');
+            
+            const payload = {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    client_id: CLIENT_ID,
+                    grant_type: 'authorization_code',
+                    code: code,
+                    redirect_uri: REDIRECT_URI,
+                    code_verifier: codeVerifier,
+                }),
+            };
+            
+            try {
+                const response = await fetch('https://accounts.spotify.com/api/token', payload);
+                const data = await response.json();
+                
+                if (data.access_token) {
+                    accessToken = data.access_token;
+                    localStorage.setItem('spotify_token', accessToken);
+                    
+                    // Store refresh token if provided
+                    if (data.refresh_token) {
+                        localStorage.setItem('refresh_token', data.refresh_token);
+                    }
+                    
+                    localStorage.removeItem('code_verifier');
+                    showApp();
+                    await initializeApp();
+                } else {
+                    showError('Failed to get access token');
+                }
+            } catch (error) {
+                showError('Authentication failed: ' + error.message);
+            }
+        }
+        
+        // Initialize app (find Focus and Break playlists)
+        async function initializeApp() {
+            try {
+                const playlists = await getPlaylists();
+                
+                const focusPlaylist = playlists.find(p => 
+                    p.name.toLowerCase().includes('focus')
+                );
+                const breakPlaylist = playlists.find(p => 
+                    p.name.toLowerCase().includes('break')
+                );
+                
+                if (!focusPlaylist) {
+                    showError('Please create a playlist with "Focus" in the name and add your work music to it.');
+                    startBtn.disabled = true;
+                    return;
+                }
+                
+                if (!breakPlaylist) {
+                    showError('Please create a playlist with "Break" in the name and add your break music to it.');
+                    startBtn.disabled = true;
+                    return;
+                }
+                
+                focusPlaylistId = focusPlaylist.id;
+                breakPlaylistId = breakPlaylist.id;
+                
+                // Show success message
+                const successMsg = document.createElement('div');
+                successMsg.style.cssText = 'background: rgba(29, 185, 84, 0.1); border: 1px solid rgba(29, 185, 84, 0.3); color: #1db954; padding: 1rem; border-radius: 12px; margin-bottom: 1rem; font-size: 0.9rem;';
+                successMsg.textContent = `✓ Connected to "${focusPlaylist.name}" and "${breakPlaylist.name}"`;
+                errorMsg.parentNode.insertBefore(successMsg, errorMsg);
+                setTimeout(() => successMsg.remove(), 5000);
+                
+            } catch (error) {
+                showError('Failed to find playlists: ' + error.message);
+            }
+        }
+        
+        // Get user's playlists
+        async function getPlaylists() {
+            const response = await fetch('https://api.spotify.com/v1/me/playlists', {
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+            if (!response.ok) throw new Error('Failed to get playlists');
+            const data = await response.json();
+            return data.items;
+        }
+        
+        // Start playback with specific playlist
+        async function startPlayback(playlistId) {
+            try {
+                const response = await fetch('https://api.spotify.com/v1/me/player/play', {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        context_uri: `spotify:playlist:${playlistId}`,
+                        position_ms: 0
+                    })
+                });
+                
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        showError('No active Spotify device found. Please open Spotify and play any song, then try again.');
+                    } else {
+                        showError('Failed to start playback. Error: ' + response.status);
+                    }
+                }
+            } catch (error) {
+                showError('Failed to start playback: ' + error.message);
+            }
+        }
+        
+        // Pause playback
+        async function pausePlayback() {
+            try {
+                const response = await fetch('https://api.spotify.com/v1/me/player/pause', {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                
+                // 404 means no active device, which is fine when stopping
+                if (!response.ok && response.status !== 404) {
+                    console.error('Failed to pause playback:', response.status);
+                }
+            } catch (error) {
+                console.error('Failed to pause playback:', error);
+            }
+        }
+        
+        // Voice announcement
+        function speak(text) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 0.9;
+            utterance.pitch = 1;
+            utterance.volume = 0.8;
+            speechSynthesis.speak(utterance);
+        }
+        
+        // Play notification sound
+        function playNotificationSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 800;
+            oscillator.type = 'sine';
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.5);
+        }
+        
+        // Update status display
+        function updateStatus(label, text, detail, mode = 'idle') {
+            statusLabel.textContent = label;
+            statusText.textContent = text;
+            statusDetail.textContent = detail;
+            
+            statusDisplay.classList.remove('active', 'break', 'pulse');
+            if (mode === 'focus') {
+                statusDisplay.classList.add('active', 'pulse');
+            } else if (mode === 'break') {
+                statusDisplay.classList.add('break', 'pulse');
+            }
+            
+            // Reset progress bar
+            if (mode === 'idle') {
+                progressBar.style.width = '100%';
+            }
+        }
+        
+        // Update progress bar
+        function updateProgress() {
+            const elapsed = Date.now() - sessionStartTime;
+            const remaining = sessionDuration - elapsed;
+            const percentRemaining = Math.max(0, (remaining / sessionDuration) * 100);
+            progressBar.style.width = percentRemaining + '%';
+            
+            if (percentRemaining <= 0) {
+                clearInterval(progressInterval);
+            }
+        }
+        
+        // Start progress animation
+        function startProgressAnimation(duration) {
+            sessionStartTime = Date.now();
+            sessionDuration = duration;
+            progressBar.style.width = '100%';
+            
+            // Update progress every second
+            progressInterval = setInterval(updateProgress, 1000);
+        }
+        
+        // Stop progress animation
+        function stopProgressAnimation() {
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
+            progressBar.style.width = '100%';
+        }
+        
+        // Check if we're in a communication slot
+        function getActiveCommSlot() {
+            const now = new Date();
+            const currentMinutes = now.getHours() * 60 + now.getMinutes();
+            
+            for (const slot of COMM_SLOTS) {
+                const slotStart = slot.hour * 60 + slot.minute;
+                const slotEnd = slotStart + 30; // 30 minute duration
+                
+                if (currentMinutes >= slotStart && currentMinutes < slotEnd) {
+                    return {
+                        start: slotStart,
+                        end: slotEnd,
+                        remainingMs: (slotEnd - currentMinutes) * 60 * 1000
+                    };
+                }
+            }
+            return null;
+        }
+        
+        // Start communication slot
+        async function startCommSlot(slot) {
+            // Stop current session
+            if (sessionTimer) {
+                clearTimeout(sessionTimer);
+                sessionTimer = null;
+            }
+            
+            currentCommSlot = slot;
+            commWarningShown = false;
+            
+            updateStatus('COMMUNICATION', 'Communication Slot', 'Time for emails and messages', 'break');
+            speak('Communication slot started');
+            
+            // Start break music
+            await startPlayback(breakPlaylistId);
+            
+            // Start progress animation
+            startProgressAnimation(slot.remainingMs);
+            
+            // Set warning timer (3 minutes before end)
+            const warningTime = slot.remainingMs - COMM_WARNING_TIME;
+            if (warningTime > 0) {
+                setTimeout(() => {
+                    if (currentCommSlot) {
+                        speak('Communication slot ends in 3 minutes');
+                        commWarningShown = true;
+                    }
+                }, warningTime);
+            }
+            
+            // Set end timer
+            sessionTimer = setTimeout(async () => {
+                await endCommSlot();
+            }, slot.remainingMs);
+        }
+        
+        // End communication slot
+        async function endCommSlot() {
+            currentCommSlot = null;
+            stopProgressAnimation();
+            
+            speak('Communication slot ended, starting focus session');
+            
+            // Wait a moment then start focus
+            setTimeout(() => {
+                startFocusSession();
+            }, 2000);
+        }
+        
+        // Check for communication slots
+        function checkCommSlots() {
+            if (currentCommSlot) {
+                // Already in a comm slot, don't check
+                return;
+            }
+            
+            const activeSlot = getActiveCommSlot();
+            if (activeSlot && isInSession) {
+                // We're in a session and a comm slot just started
+                startCommSlot(activeSlot);
+            }
+        }
+        
+        // Start focus session
+        async function startFocusSession() {
+            // Check if we're currently in a comm slot
+            const activeSlot = getActiveCommSlot();
+            if (activeSlot) {
+                // Start comm slot instead
+                isInSession = true;
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'block';
+                focusDurationInput.disabled = true;
+                breakDurationInput.disabled = true;
+                
+                await startCommSlot(activeSlot);
+                return;
+            }
+            
+            isInSession = true;
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'block';
+            
+            // Disable duration inputs during session
+            focusDurationInput.disabled = true;
+            breakDurationInput.disabled = true;
+            
+            // Get custom durations in milliseconds
+            const focusMinutes = parseInt(focusDurationInput.value);
+            const focusDuration = focusMinutes * 60 * 1000;
+            
+            updateStatus('FOCUS MODE', 'Deep Work Session', `${focusMinutes} minutes of focused work`, 'focus');
+            
+            // Start progress animation
+            startProgressAnimation(focusDuration);
+            
+            await startPlayback(focusPlaylistId);
+            
+            sessionTimer = setTimeout(async () => {
+                await endFocusSession();
+            }, focusDuration);
+            
+            // Start checking for comm slots every minute
+            if (!commCheckInterval) {
+                commCheckInterval = setInterval(checkCommSlots, 60000); // Check every minute
+            }
+        }
+        
+        // End focus session and start break
+        async function endFocusSession() {
+            stopProgressAnimation();
+            
+            playNotificationSound();
+            setTimeout(() => {
+                speak('Work session is done, time to take a break');
+            }, 500);
+            
+            sessionCount++;
+            updateSessionCount();
+            localStorage.setItem('session_count_' + new Date().toDateString(), sessionCount);
+            
+            // Check if we should start a comm slot instead of a break
+            const activeSlot = getActiveCommSlot();
+            if (activeSlot) {
+                setTimeout(async () => {
+                    await startCommSlot(activeSlot);
+                }, 2000);
+                return;
+            }
+            
+            // Get custom break duration
+            const breakMinutes = parseInt(breakDurationInput.value);
+            const breakDuration = breakMinutes * 60 * 1000;
+            
+            updateStatus('BREAK TIME', 'Taking a Break', `${breakMinutes} minutes to recharge`, 'break');
+            
+            // Start break progress animation
+            startProgressAnimation(breakDuration);
+            
+            setTimeout(async () => {
+                await startPlayback(breakPlaylistId);
+            }, 3000);
+            
+            sessionTimer = setTimeout(async () => {
+                // Check again if comm slot started during break
+                const slotDuringBreak = getActiveCommSlot();
+                if (slotDuringBreak) {
+                    await startCommSlot(slotDuringBreak);
+                    return;
+                }
+                
+                stopProgressAnimation();
+                await pausePlayback();
+                playNotificationSound();
+                setTimeout(() => {
+                    speak('Break is over, back to focus');
+                }, 500);
+                
+                setTimeout(() => {
+                    startFocusSession();
+                }, 3000);
+            }, breakDuration);
+        }
+        
+        // Stop session
+        async function stopSession() {
+            if (sessionTimer) {
+                clearTimeout(sessionTimer);
+                sessionTimer = null;
+            }
+            
+            if (commCheckInterval) {
+                clearInterval(commCheckInterval);
+                commCheckInterval = null;
+            }
+            
+            currentCommSlot = null;
+            stopProgressAnimation();
+            
+            // Actually pause the music
+            await pausePlayback();
+            
+            isInSession = false;
+            
+            // Re-enable duration inputs
+            focusDurationInput.disabled = false;
+            breakDurationInput.disabled = false;
+            
+            startBtn.style.display = 'block';
+            stopBtn.style.display = 'none';
+            
+            updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
+        }
+        
+        // Update session count display
+        function updateSessionCount() {
+            sessionCountEl.textContent = sessionCount;
+        }
+        
+        // Show error message
+        function showError(message) {
+            errorMsg.textContent = message;
+            errorMsg.style.display = 'block';
+        }
+        
+        // Event listeners
+        startBtn.addEventListener('click', startFocusSession);
+        stopBtn.addEventListener('click', () => stopSession());
+        
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>
