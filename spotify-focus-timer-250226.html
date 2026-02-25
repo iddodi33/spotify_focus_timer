@@ -4,6 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Focus Timer - Spotify</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="description" content="Spotify-powered productivity timer with customizable focus and break sessions">
+    <meta name="theme-color" content="#1db954">
+    <link rel="manifest" href="./manifest.json">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Focus Timer">
+    
     <style>
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Space+Mono:wght@400;700&display=swap');
         
@@ -1107,6 +1117,13 @@
         
         // Initialize on load
         init();
+        
+        // Register service worker for PWA
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./sw.js')
+                .then(() => console.log('Service Worker registered'))
+                .catch((err) => console.log('Service Worker registration failed:', err));
+        }
         
         // Handle page visibility changes (laptop wake from sleep)
         document.addEventListener('visibilitychange', async () => {
