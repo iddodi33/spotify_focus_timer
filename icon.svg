@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" fill="#0a0e27" rx="80"/>
+  
+  <!-- Outer circle glow -->
+  <circle cx="256" cy="256" r="160" fill="none" stroke="#1db954" stroke-width="8" opacity="0.3"/>
+  
+  <!-- Main timer circle -->
+  <circle cx="256" cy="256" r="140" fill="none" stroke="#1db954" stroke-width="12"/>
+  
+  <!-- Progress arc (3/4 complete) -->
+  <path d="M 256 116 A 140 140 0 1 1 256 116" fill="none" stroke="#1ed760" stroke-width="16" stroke-linecap="round" opacity="0.6"/>
+  
+  <!-- Center dot -->
+  <circle cx="256" cy="256" r="8" fill="#1db954"/>
+  
+  <!-- Timer hand -->
+  <line x1="256" y1="256" x2="256" y2="140" stroke="#1db954" stroke-width="8" stroke-linecap="round"/>
+  
+  <!-- Small dots at 12, 3, 6, 9 positions -->
+  <circle cx="256" cy="116" r="6" fill="#8b93a7"/>
+  <circle cx="396" cy="256" r="6" fill="#8b93a7"/>
+  <circle cx="256" cy="396" r="6" fill="#8b93a7"/>
+  <circle cx="116" cy="256" r="6" fill="#8b93a7"/>
+  
+  <!-- Spotify-like sound wave bars at bottom -->
+  <rect x="200" y="420" width="12" height="40" fill="#1db954" rx="6" opacity="0.7"/>
+  <rect x="220" y="400" width="12" height="60" fill="#1db954" rx="6" opacity="0.8"/>
+  <rect x="240" y="390" width="12" height="70" fill="#1ed760" rx="6"/>
+  <rect x="260" y="400" width="12" height="60" fill="#1db954" rx="6" opacity="0.8"/>
+  <rect x="280" y="420" width="12" height="40" fill="#1db954" rx="6" opacity="0.7"/>
+</svg>
