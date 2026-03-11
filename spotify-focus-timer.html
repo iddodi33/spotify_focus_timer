@@ -371,6 +371,7 @@
                 </div>
                 
                 <button id="start-btn" class="btn btn-primary">Start Focus Session</button>
+                <button id="pause-btn" class="btn btn-secondary" style="display: none;">⏸ Pause Session</button>
                 <button id="stop-btn" class="btn btn-secondary" style="display: none;">Stop Session</button>
                 <button id="call-btn" class="btn btn-call">📞 In Call Mode</button>
                 
@@ -387,6 +388,15 @@
                         ☕ Break session with your Break playlist<br>
                         🔔 Voice: "Break is over, back to focus"<br>
                         🔄 Automatically repeats
+                    </div>
+                </div>
+                
+                <div class="info" style="border-left-color: #f59e0b;">
+                    <div class="info-title">📞 Communication Slots (30 min each)</div>
+                    <div class="info-text">
+                        Automatically interrupts sessions at:<br>
+                        🕘 9:00 AM • 🕧 12:30 PM • 🕑 2:00 PM • 🕞 3:30 PM<br>
+                        <small style="opacity: 0.7;">Plays break music, then resumes focus after</small>
                     </div>
                 </div>
             </div>
@@ -426,12 +436,16 @@
         let currentCommSlot = null;
         let commWarningShown = false;
         let inCallMode = false;
+        let isPaused = false;
+        let pausedTimeRemaining = 0;
+        let pausedSessionType = null;
         
         // DOM Elements
         const loginSection = document.getElementById('login-section');
         const appSection = document.getElementById('app-section');
         const loginBtn = document.getElementById('login-btn');
         const startBtn = document.getElementById('start-btn');
+        const pauseBtn = document.getElementById('pause-btn');
         const stopBtn = document.getElementById('stop-btn');
         const callBtn = document.getElementById('call-btn');
         const statusDisplay = document.getElementById('status-display');
@@ -954,6 +968,7 @@
                 // Start comm slot instead
                 isInSession = true;
                 startBtn.style.display = 'none';
+                pauseBtn.style.display = 'block';
                 stopBtn.style.display = 'block';
                 focusDurationInput.disabled = true;
                 breakDurationInput.disabled = true;
@@ -963,7 +978,10 @@
             }
             
             isInSession = true;
+            isPaused = false;
             startBtn.style.display = 'none';
+            pauseBtn.style.display = 'block';
+            pauseBtn.textContent = '⏸ Pause Session';
             stopBtn.style.display = 'block';
             
             // Disable duration inputs during session
@@ -1060,6 +1078,9 @@
             }
             
             currentCommSlot = null;
+            isPaused = false;
+            pausedTimeRemaining = 0;
+            pausedSessionType = null;
             stopProgressAnimation();
             
             // Actually pause the music
@@ -1072,6 +1093,7 @@
             breakDurationInput.disabled = false;
             
             startBtn.style.display = 'block';
+            pauseBtn.style.display = 'none';
             stopBtn.style.display = 'none';
             
             updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
@@ -1107,6 +1129,99 @@
             }
         }
         
+        // Pause session
+        async function pauseSession() {
+            if (!isInSession || isPaused) return;
+            
+            isPaused = true;
+            
+            // Calculate remaining time
+            const elapsed = Date.now() - sessionStartTime;
+            pausedTimeRemaining = sessionDuration - elapsed;
+            
+            // Remember what type of session we were in
+            if (currentCommSlot) {
+                pausedSessionType = 'communication';
+            } else if (statusText.textContent === 'Deep Work Session') {
+                pausedSessionType = 'focus';
+            } else {
+                pausedSessionType = 'break';
+            }
+            
+            // Clear timers
+            if (sessionTimer) {
+                clearTimeout(sessionTimer);
+                sessionTimer = null;
+            }
+            stopProgressAnimation();
+            
+            // Pause music
+            await pausePlayback();
+            
+            // Update UI
+            pauseBtn.textContent = '▶️ Resume Session';
+            updateStatus('PAUSED', 'Session Paused', `${Math.ceil(pausedTimeRemaining / 60000)} minutes remaining`, 'idle');
+        }
+        
+        // Resume session
+        async function resumeSession() {
+            if (!isPaused) return;
+            
+            isPaused = false;
+            
+            // Update UI based on session type
+            if (pausedSessionType === 'focus') {
+                const focusMinutes = Math.ceil(pausedTimeRemaining / 60000);
+                updateStatus('FOCUS MODE', 'Deep Work Session', `${focusMinutes} minutes remaining`, 'focus');
+                await startPlayback(focusPlaylistId);
+            } else if (pausedSessionType === 'break') {
+                const breakMinutes = Math.ceil(pausedTimeRemaining / 60000);
+                updateStatus('BREAK TIME', 'Taking a Break', `${breakMinutes} minutes remaining`, 'break');
+                await startPlayback(breakPlaylistId);
+            } else if (pausedSessionType === 'communication') {
+                const commMinutes = Math.ceil(pausedTimeRemaining / 60000);
+                updateStatus('COMMUNICATION', 'Communication Slot', `${commMinutes} minutes remaining`, 'break');
+                await startPlayback(breakPlaylistId);
+            }
+            
+            // Restart progress animation
+            sessionStartTime = Date.now();
+            sessionDuration = pausedTimeRemaining;
+            startProgressAnimation(pausedTimeRemaining);
+            
+            // Set new timer
+            sessionTimer = setTimeout(async () => {
+                if (pausedSessionType === 'focus') {
+                    await endFocusSession();
+                } else if (pausedSessionType === 'break') {
+                    // Break ended, start focus
+                    stopProgressAnimation();
+                    await pausePlayback();
+                    playNotificationSound();
+                    setTimeout(() => {
+                        speak('Break is over, back to focus');
+                    }, 500);
+                    setTimeout(() => {
+                        startFocusSession();
+                    }, 3000);
+                } else if (pausedSessionType === 'communication') {
+                    await endCommSlot();
+                }
+            }, pausedTimeRemaining);
+            
+            // Update button
+            pauseBtn.textContent = '⏸ Pause Session';
+        }
+        
+        // Toggle pause/resume
+        async function togglePause() {
+            if (isPaused) {
+                await resumeSession();
+            } else {
+                await pauseSession();
+            }
+        }
+        
         // Update session count display
         function updateSessionCount() {
             sessionCountEl.textContent = sessionCount;
@@ -1124,6 +1239,7 @@
                 startFocusSession();
             }
         });
+        pauseBtn.addEventListener('click', togglePause);
         stopBtn.addEventListener('click', () => stopSession());
         callBtn.addEventListener('click', toggleCallMode);
         
