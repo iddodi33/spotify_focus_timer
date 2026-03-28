@@ -304,6 +304,81 @@
         #app-section { display: none; }
         #login-section.show { display: block !important; }
         #app-section.show { display: block !important; }
+
+        .comm-slots-toggle label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            font-size: 0.9rem;
+            color: var(--text);
+            font-weight: 500;
+            margin-bottom: 0;
+        }
+
+        .comm-slots-toggle input[type="checkbox"] {
+            width: auto;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .comm-slots-config {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .comm-slots-config .slots-hint {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-bottom: 0.75rem;
+        }
+
+        .comm-slot-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .comm-slot-row input[type="time"] {
+            flex: 1;
+            padding: 0.6rem 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: var(--text);
+            font-family: 'DM Mono', monospace;
+            font-size: 0.9rem;
+        }
+
+        .comm-slot-row input[type="time"]:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .btn-remove-slot {
+            background: rgba(239, 68, 68, 0.12);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #fca5a5;
+            border-radius: 6px;
+            padding: 0.45rem 0.65rem;
+            cursor: pointer;
+            font-size: 0.85rem;
+            line-height: 1;
+            transition: background 0.2s;
+        }
+
+        .btn-remove-slot:hover {
+            background: rgba(239, 68, 68, 0.25);
+        }
+
+        .btn-add-slot {
+            width: auto;
+            padding: 0.5rem 1rem;
+            font-size: 0.8rem;
+            margin-top: 0.25rem;
+        }
         
         .error {
             background: rgba(239, 68, 68, 0.1);
@@ -356,6 +431,17 @@
                         <label for="break-duration">Break Duration (minutes):</label>
                         <input type="number" id="break-duration" min="1" max="60" value="5">
                     </div>
+                    <div class="setting-group comm-slots-toggle">
+                        <label>
+                            <input type="checkbox" id="comm-slots-enabled">
+                            Communication slot interruptions
+                        </label>
+                    </div>
+                    <div id="comm-slots-config" class="comm-slots-config" style="display: none;">
+                        <p class="slots-hint">Interrupts sessions at these times for 30-min communication blocks.</p>
+                        <div id="comm-slots-list"></div>
+                        <button type="button" id="add-slot-btn" class="btn btn-secondary btn-add-slot">+ Add Time</button>
+                    </div>
                 </div>
                 
                 <div id="status-display" class="status">
@@ -400,16 +486,8 @@
         const FOCUS_DURATION = 30 * 60 * 1000; // Default 30 minutes
         const BREAK_DURATION = 5 * 60 * 1000; // Default 5 minutes
         const COMM_DURATION = 30 * 60 * 1000; // 30 minutes
-        const COMM_WARNING_TIME = 3 * 60 * 1000; // 3 minutes before end
-        
-        // Communication slots (times in 24-hour format)
-        const COMM_SLOTS = [
-            { hour: 9, minute: 0 },   // 9:00 AM
-            { hour: 12, minute: 30 }, // 12:30 PM
-            { hour: 14, minute: 0 },  // 2:00 PM
-            { hour: 15, minute: 30 }  // 3:30 PM
-        ];
-        
+        const COMM_WARNING_TIME = 3 * 60 * 1000; // 3 minutes before comm slot ends
+
         let accessToken = null;
         let sessionTimer = null;
         let sessionCount = 0;
@@ -442,6 +520,10 @@
         const focusDurationInput = document.getElementById('focus-duration');
         const breakDurationInput = document.getElementById('break-duration');
         const progressBar = document.getElementById('progress-bar');
+        const commSlotsEnabledCheckbox = document.getElementById('comm-slots-enabled');
+        const commSlotsConfig = document.getElementById('comm-slots-config');
+        const commSlotsList = document.getElementById('comm-slots-list');
+        const addSlotBtn = document.getElementById('add-slot-btn');
         
         // PKCE Helper Functions
         function generateRandomString(length) {
@@ -503,6 +585,7 @@
         function showApp() {
             loginSection.classList.remove('show');
             appSection.classList.add('show');
+            loadCommSlotsConfig();
         }
         
         // Spotify Authentication with PKCE
@@ -928,15 +1011,69 @@
             progressBar.style.width = '100%';
         }
         
-        // Check if we're in a communication slot
+        // Comm slots config — load/save/render
+        const DEFAULT_SLOTS = [
+            { hour: 9, minute: 0 },
+            { hour: 12, minute: 30 },
+            { hour: 14, minute: 0 },
+            { hour: 15, minute: 30 }
+        ];
+
+        function addSlotRow(hour = 9, minute = 0) {
+            const row = document.createElement('div');
+            row.className = 'comm-slot-row';
+            const val = String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+            row.innerHTML = `<input type="time" value="${val}"><button type="button" class="btn-remove-slot">✕</button>`;
+            row.querySelector('input[type="time"]').addEventListener('change', saveCommSlotsConfig);
+            row.querySelector('.btn-remove-slot').addEventListener('click', () => {
+                row.remove();
+                saveCommSlotsConfig();
+            });
+            commSlotsList.appendChild(row);
+        }
+
+        function getCommSlots() {
+            const slots = [];
+            commSlotsList.querySelectorAll('input[type="time"]').forEach(input => {
+                if (input.value) {
+                    const [h, m] = input.value.split(':').map(Number);
+                    slots.push({ hour: h, minute: m });
+                }
+            });
+            return slots;
+        }
+
+        function saveCommSlotsConfig() {
+            localStorage.setItem('comm_slots_enabled', commSlotsEnabledCheckbox.checked);
+            localStorage.setItem('comm_slots', JSON.stringify(getCommSlots()));
+        }
+
+        function loadCommSlotsConfig() {
+            const enabled = localStorage.getItem('comm_slots_enabled') !== 'false';
+            commSlotsEnabledCheckbox.checked = enabled;
+            commSlotsConfig.style.display = enabled ? 'block' : 'none';
+
+            let slots = DEFAULT_SLOTS;
+            try {
+                const saved = localStorage.getItem('comm_slots');
+                if (saved) slots = JSON.parse(saved);
+            } catch (e) {}
+
+            commSlotsList.innerHTML = '';
+            slots.forEach(s => addSlotRow(s.hour, s.minute));
+        }
+
+        // Check if we're in an active communication slot
         function getActiveCommSlot() {
+            if (!commSlotsEnabledCheckbox.checked) return null;
+
             const now = new Date();
             const currentMinutes = now.getHours() * 60 + now.getMinutes();
-            
-            for (const slot of COMM_SLOTS) {
+
+            for (const slot of getCommSlots()) {
                 const slotStart = slot.hour * 60 + slot.minute;
-                const slotEnd = slotStart + 30; // 30 minute duration
-                
+                const slotEnd = slotStart + 30;
+
                 if (currentMinutes >= slotStart && currentMinutes < slotEnd) {
                     return {
                         start: slotStart,
@@ -973,6 +1110,7 @@
                 showError('Please open Spotify on any device and play any song first, then click Start again.');
                 return;
             }
+            hideError();
 
             startProgressAnimation(slot.remainingMs);
 
@@ -1056,6 +1194,7 @@
                 showError('Please open Spotify on any device and play any song first, then click Start again.');
                 return;
             }
+            hideError();
 
             sessionTimer = setTimeout(async () => {
                 await endFocusSession();
@@ -1196,10 +1335,14 @@
             sessionCountEl.textContent = sessionCount;
         }
         
-        // Show error message
+        // Show/hide error message
         function showError(message) {
             errorMsg.textContent = message;
             errorMsg.style.display = 'block';
+        }
+
+        function hideError() {
+            errorMsg.style.display = 'none';
         }
         
         // Event listeners
@@ -1210,6 +1353,16 @@
         });
         stopBtn.addEventListener('click', () => stopSession());
         callBtn.addEventListener('click', toggleCallMode);
+
+        commSlotsEnabledCheckbox.addEventListener('change', () => {
+            commSlotsConfig.style.display = commSlotsEnabledCheckbox.checked ? 'block' : 'none';
+            saveCommSlotsConfig();
+        });
+
+        addSlotBtn.addEventListener('click', () => {
+            addSlotRow();
+            saveCommSlotsConfig();
+        });
         
         // Initialize on load
         init();
