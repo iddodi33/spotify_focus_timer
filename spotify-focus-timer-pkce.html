@@ -305,7 +305,7 @@
         }
         
         .show {
-            display: block !important;
+            display: block;
         }
         
         .error {
@@ -371,7 +371,6 @@
                 </div>
                 
                 <button id="start-btn" class="btn btn-primary">Start Focus Session</button>
-                <button id="pause-btn" class="btn btn-secondary" style="display: none;">⏸ Pause Session</button>
                 <button id="stop-btn" class="btn btn-secondary" style="display: none;">Stop Session</button>
                 <button id="call-btn" class="btn btn-call">📞 In Call Mode</button>
                 
@@ -390,24 +389,15 @@
                         🔄 Automatically repeats
                     </div>
                 </div>
-                
-                <div class="info" style="border-left-color: #f59e0b;">
-                    <div class="info-title">📞 Communication Slots (30 min each)</div>
-                    <div class="info-text">
-                        Automatically interrupts sessions at:<br>
-                        🕘 9:00 AM • 🕧 12:30 PM • 🕑 2:00 PM • 🕞 3:30 PM<br>
-                        <small style="opacity: 0.7;">Plays break music, then resumes focus after</small>
-                    </div>
-                </div>
             </div>
         </div>
     </div>
 
     <script>
         // Spotify API Configuration - REPLACE WITH YOUR CLIENT ID
-        const CLIENT_ID = '8e34dc8a40374855a3c8e3064e271405';
+        const CLIENT_ID = 'YOUR_CLIENT_ID';
         const REDIRECT_URI = window.location.origin + window.location.pathname;
-        const SCOPES = 'user-read-playback-state user-modify-playback-state playlist-read-private playlist-read-collaborative';
+        const SCOPES = 'user-read-playback-state user-modify-playback-state playlist-read-private playlist-read-collaborative user-library-read playlist-modify-private';
         
         // Session Configuration
         const FOCUS_DURATION = 30 * 60 * 1000; // Default 30 minutes
@@ -436,16 +426,14 @@
         let currentCommSlot = null;
         let commWarningShown = false;
         let inCallMode = false;
-        let isPaused = false;
-        let pausedTimeRemaining = 0;
-        let pausedSessionType = null;
+        let transitionPlaybackTimeout = null;
+        let transitionNextSessionTimeout = null;
         
         // DOM Elements
         const loginSection = document.getElementById('login-section');
         const appSection = document.getElementById('app-section');
         const loginBtn = document.getElementById('login-btn');
         const startBtn = document.getElementById('start-btn');
-        const pauseBtn = document.getElementById('pause-btn');
         const stopBtn = document.getElementById('stop-btn');
         const callBtn = document.getElementById('call-btn');
         const statusDisplay = document.getElementById('status-display');
@@ -480,6 +468,17 @@
         
         // Initialize
         async function init() {
+            if (CLIENT_ID === 'YOUR_CLIENT_ID') {
+                loginSection.classList.add('show');
+                loginBtn.disabled = true;
+                loginBtn.textContent = 'Client ID Not Set';
+                const warning = document.createElement('div');
+                warning.className = 'error';
+                warning.innerHTML = '<strong>Setup required:</strong> Open this file and replace <code>YOUR_CLIENT_ID</code> with your Spotify app\'s Client ID from <a href="https://developer.spotify.com/dashboard" style="color:#fca5a5">developer.spotify.com/dashboard</a>. Set the Redirect URI to: <strong>' + REDIRECT_URI + '</strong>';
+                loginSection.insertBefore(warning, loginSection.firstChild);
+                return;
+            }
+
             // Check if we're returning from Spotify auth
             const urlParams = new URLSearchParams(window.location.search);
             const code = urlParams.get('code');
@@ -491,18 +490,8 @@
                 window.history.replaceState({}, document.title, window.location.pathname);
             } else if (localStorage.getItem('spotify_token')) {
                 accessToken = localStorage.getItem('spotify_token');
-                
-                // Check if token is still valid
-                const tokenValid = await ensureValidToken();
-                
-                if (tokenValid) {
-                    showApp();
-                    await initializeApp();
-                } else {
-                    // Token refresh failed, need to re-authenticate
-                    localStorage.clear();
-                    loginSection.classList.add('show');
-                }
+                showApp();
+                await initializeApp();
             } else {
                 loginSection.classList.add('show');
             }
@@ -578,9 +567,12 @@
                     showApp();
                     await initializeApp();
                 } else {
-                    showError('Failed to get access token');
+                    loginSection.classList.add('show');
+                    const errDetail = data.error_description || data.error || 'Unknown error';
+                    alert('Failed to get access token: ' + errDetail + '\n\nMake sure your Redirect URI in the Spotify Developer Dashboard matches: ' + REDIRECT_URI);
                 }
             } catch (error) {
+                loginSection.classList.add('show');
                 showError('Authentication failed: ' + error.message);
             }
         }
@@ -658,126 +650,189 @@
             return true;
         }
         
-        // Initialize app (find Focus and Break playlists)
+        // Initialize app (find or auto-create Focus and Break playlists)
         async function initializeApp() {
             try {
                 const playlists = await getPlaylists();
-                
-                const focusPlaylist = playlists.find(p => 
-                    p.name.toLowerCase().includes('focus')
-                );
-                const breakPlaylist = playlists.find(p => 
-                    p.name.toLowerCase().includes('break')
-                );
-                
-                if (!focusPlaylist) {
-                    showError('Please create a playlist with "Focus" in the name and add your work music to it.');
-                    startBtn.disabled = true;
+
+                const focusPlaylist = playlists.find(p => p.name.toLowerCase().includes('focus'));
+                const breakPlaylist = playlists.find(p => p.name.toLowerCase().includes('break'));
+
+                if (!focusPlaylist || !breakPlaylist) {
+                    await autoCreatePlaylists();
                     return;
                 }
-                
-                if (!breakPlaylist) {
-                    showError('Please create a playlist with "Break" in the name and add your break music to it.');
-                    startBtn.disabled = true;
-                    return;
-                }
-                
+
                 focusPlaylistId = focusPlaylist.id;
                 breakPlaylistId = breakPlaylist.id;
-                
-                // Show success message
+
                 const successMsg = document.createElement('div');
                 successMsg.style.cssText = 'background: rgba(29, 185, 84, 0.1); border: 1px solid rgba(29, 185, 84, 0.3); color: #1db954; padding: 1rem; border-radius: 12px; margin-bottom: 1rem; font-size: 0.9rem;';
                 successMsg.textContent = `✓ Connected to "${focusPlaylist.name}" and "${breakPlaylist.name}"`;
                 errorMsg.parentNode.insertBefore(successMsg, errorMsg);
                 setTimeout(() => successMsg.remove(), 5000);
-                
+
             } catch (error) {
-                showError('Failed to find playlists: ' + error.message);
+                showError('Failed to initialize: ' + error.message);
+            }
+        }
+
+        // Auto-create Focus and Break playlists from liked songs
+        async function autoCreatePlaylists() {
+            const infoMsg = document.createElement('div');
+            infoMsg.style.cssText = 'background: rgba(29, 185, 84, 0.1); border: 1px solid rgba(29, 185, 84, 0.3); color: #1db954; padding: 1rem; border-radius: 12px; margin-bottom: 1rem; font-size: 0.9rem;';
+            infoMsg.textContent = '⏳ No Focus/Break playlists found. Building them from your liked songs...';
+            errorMsg.parentNode.insertBefore(infoMsg, errorMsg);
+            startBtn.disabled = true;
+
+            try {
+                // Fetch up to 100 liked songs (2 pages of 50)
+                let tracks = [];
+                let url = 'https://api.spotify.com/v1/me/tracks?limit=50';
+                while (url && tracks.length < 100) {
+                    const r = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } });
+                    if (!r.ok) throw new Error('Failed to fetch liked songs');
+                    const d = await r.json();
+                    tracks = tracks.concat(d.items.map(item => item.track).filter(t => t && t.id));
+                    url = d.next;
+                }
+
+                if (tracks.length === 0) throw new Error('No liked songs found. Like some songs in Spotify first.');
+
+                // Fetch audio features in one batch (max 100 ids)
+                const ids = tracks.slice(0, 100).map(t => t.id).join(',');
+                const featRes = await fetch(`https://api.spotify.com/v1/audio-features?ids=${ids}`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                if (!featRes.ok) throw new Error('Failed to fetch audio features');
+                const featData = await featRes.json();
+
+                // Sort tracks by audio features
+                const focusTracks = [];
+                const breakTracks = [];
+                tracks.slice(0, 100).forEach((track, i) => {
+                    const f = featData.audio_features[i];
+                    if (f && f.energy > 0.6 && f.tempo > 110) {
+                        focusTracks.push(track);
+                    } else {
+                        breakTracks.push(track);
+                    }
+                });
+
+                // Create Focus playlist
+                const focusRes = await fetch('https://api.spotify.com/v1/me/playlists', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: 'Focus - Auto', description: 'Auto-created by Focus Timer: high-energy tracks for deep work', public: false })
+                });
+                if (!focusRes.ok) throw new Error('Failed to create Focus playlist');
+                const focusData = await focusRes.json();
+
+                // Create Break playlist
+                const breakRes = await fetch('https://api.spotify.com/v1/me/playlists', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: 'Break - Auto', description: 'Auto-created by Focus Timer: relaxing tracks for breaks', public: false })
+                });
+                if (!breakRes.ok) throw new Error('Failed to create Break playlist');
+                const breakData = await breakRes.json();
+
+                // Add tracks to each playlist
+                if (focusTracks.length > 0) {
+                    await fetch(`https://api.spotify.com/v1/playlists/${focusData.id}/tracks`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ uris: focusTracks.map(t => `spotify:track:${t.id}`) })
+                    });
+                }
+                if (breakTracks.length > 0) {
+                    await fetch(`https://api.spotify.com/v1/playlists/${breakData.id}/tracks`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ uris: breakTracks.map(t => `spotify:track:${t.id}`) })
+                    });
+                }
+
+                focusPlaylistId = focusData.id;
+                breakPlaylistId = breakData.id;
+                startBtn.disabled = false;
+                infoMsg.remove();
+
+                const successMsg = document.createElement('div');
+                successMsg.style.cssText = 'background: rgba(29, 185, 84, 0.1); border: 1px solid rgba(29, 185, 84, 0.3); color: #1db954; padding: 1rem; border-radius: 12px; margin-bottom: 1rem; font-size: 0.9rem;';
+                successMsg.innerHTML = `✓ Created playlists from your liked songs:<br>
+                    🎯 <strong>Focus - Auto</strong>: ${focusTracks.length} high-energy tracks (energy &gt; 0.6, tempo &gt; 110 BPM)<br>
+                    ☕ <strong>Break - Auto</strong>: ${breakTracks.length} relaxing tracks`;
+                errorMsg.parentNode.insertBefore(successMsg, errorMsg);
+                setTimeout(() => successMsg.remove(), 12000);
+
+            } catch (error) {
+                infoMsg.remove();
+                startBtn.disabled = false;
+                showError('Could not auto-create playlists: ' + error.message + '. Please create playlists with "Focus" and "Break" in their names.');
             }
         }
         
-        // Get user's playlists
+        // Get all of the user's playlists (paginated)
         async function getPlaylists() {
-            // Ensure token is valid before making request
             await ensureValidToken();
-            
-            const response = await fetch('https://api.spotify.com/v1/me/playlists', {
-                headers: { 'Authorization': `Bearer ${accessToken}` }
-            });
-            
-            if (response.status === 401) {
-                // Token expired, try to refresh
-                const refreshed = await refreshAccessToken();
-                if (refreshed) {
-                    // Retry with new token
-                    const retryResponse = await fetch('https://api.spotify.com/v1/me/playlists', {
+
+            let items = [];
+            let url = 'https://api.spotify.com/v1/me/playlists?limit=50';
+
+            while (url) {
+                let response = await fetch(url, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+
+                if (response.status === 401) {
+                    const refreshed = await refreshAccessToken();
+                    if (!refreshed) throw new Error('Failed to get playlists - authentication required');
+                    response = await fetch(url, {
                         headers: { 'Authorization': `Bearer ${accessToken}` }
                     });
-                    if (!retryResponse.ok) throw new Error('Failed to get playlists');
-                    const data = await retryResponse.json();
-                    return data.items;
-                } else {
-                    throw new Error('Failed to get playlists - authentication required');
                 }
+
+                if (!response.ok) throw new Error('Failed to get playlists');
+                const data = await response.json();
+                items = items.concat(data.items);
+                url = data.next;
             }
-            
-            if (!response.ok) throw new Error('Failed to get playlists');
-            const data = await response.json();
-            return data.items;
+
+            return items;
         }
         
-        // Start playback with specific playlist
+        // Start playback with specific playlist. Returns true on success, false if no device (404).
         async function startPlayback(playlistId) {
-            // Ensure token is valid before making request
             await ensureValidToken();
-            
+
+            const body = JSON.stringify({ context_uri: `spotify:playlist:${playlistId}`, position_ms: 0 });
+            const headers = { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
+
             try {
-                const response = await fetch('https://api.spotify.com/v1/me/player/play', {
-                    method: 'PUT',
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        context_uri: `spotify:playlist:${playlistId}`,
-                        position_ms: 0
-                    })
+                let response = await fetch('https://api.spotify.com/v1/me/player/play', {
+                    method: 'PUT', headers, body
                 });
-                
+
                 if (response.status === 401) {
-                    // Token expired, refresh and retry
                     const refreshed = await refreshAccessToken();
-                    if (refreshed) {
-                        // Retry with new token
-                        const retryResponse = await fetch('https://api.spotify.com/v1/me/player/play', {
-                            method: 'PUT',
-                            headers: {
-                                'Authorization': `Bearer ${accessToken}`,
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                                context_uri: `spotify:playlist:${playlistId}`,
-                                position_ms: 0
-                            })
-                        });
-                        
-                        if (!retryResponse.ok && retryResponse.status !== 404) {
-                            showError('Failed to start playback after token refresh');
-                        }
-                    }
-                    return;
+                    if (!refreshed) return false;
+                    response = await fetch('https://api.spotify.com/v1/me/player/play', {
+                        method: 'PUT',
+                        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                        body
+                    });
                 }
-                
+
+                if (response.status === 404) return false;
                 if (!response.ok) {
-                    if (response.status === 404) {
-                        showError('No active Spotify device found. Please open Spotify and play any song, then try again.');
-                    } else {
-                        showError('Failed to start playback. Error: ' + response.status);
-                    }
+                    showError('Failed to start playback. Error: ' + response.status);
+                    return false;
                 }
+                return true;
             } catch (error) {
                 showError('Failed to start playback: ' + error.message);
+                return false;
             }
         }
         
@@ -898,25 +953,32 @@
         
         // Start communication slot
         async function startCommSlot(slot) {
-            // Stop current session
             if (sessionTimer) {
                 clearTimeout(sessionTimer);
                 sessionTimer = null;
             }
-            
+
             currentCommSlot = slot;
             commWarningShown = false;
-            
+
             updateStatus('COMMUNICATION', 'Communication Slot', 'Time for emails and messages', 'break');
             speak('Communication slot started');
-            
-            // Start break music
-            await startPlayback(breakPlaylistId);
-            
-            // Start progress animation
+
+            const playbackOk = await startPlayback(breakPlaylistId);
+            if (!playbackOk) {
+                currentCommSlot = null;
+                isInSession = false;
+                startBtn.style.display = 'block';
+                stopBtn.style.display = 'none';
+                focusDurationInput.disabled = false;
+                breakDurationInput.disabled = false;
+                updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
+                showError('Please open Spotify on any device and play any song first, then click Start again.');
+                return;
+            }
+
             startProgressAnimation(slot.remainingMs);
-            
-            // Set warning timer (3 minutes before end)
+
             const warningTime = slot.remainingMs - COMM_WARNING_TIME;
             if (warningTime > 0) {
                 setTimeout(() => {
@@ -926,8 +988,7 @@
                     }
                 }, warningTime);
             }
-            
-            // Set end timer
+
             sessionTimer = setTimeout(async () => {
                 await endCommSlot();
             }, slot.remainingMs);
@@ -962,50 +1023,49 @@
         
         // Start focus session
         async function startFocusSession() {
-            // Check if we're currently in a comm slot
             const activeSlot = getActiveCommSlot();
             if (activeSlot) {
-                // Start comm slot instead
                 isInSession = true;
                 startBtn.style.display = 'none';
-                pauseBtn.style.display = 'block';
                 stopBtn.style.display = 'block';
                 focusDurationInput.disabled = true;
                 breakDurationInput.disabled = true;
-                
                 await startCommSlot(activeSlot);
                 return;
             }
-            
+
             isInSession = true;
-            isPaused = false;
             startBtn.style.display = 'none';
-            pauseBtn.style.display = 'block';
-            pauseBtn.textContent = '⏸ Pause Session';
             stopBtn.style.display = 'block';
-            
-            // Disable duration inputs during session
             focusDurationInput.disabled = true;
             breakDurationInput.disabled = true;
-            
-            // Get custom durations in milliseconds
+
             const focusMinutes = parseInt(focusDurationInput.value);
             const focusDuration = focusMinutes * 60 * 1000;
-            
+
             updateStatus('FOCUS MODE', 'Deep Work Session', `${focusMinutes} minutes of focused work`, 'focus');
-            
-            // Start progress animation
             startProgressAnimation(focusDuration);
-            
-            await startPlayback(focusPlaylistId);
-            
+
+            const playbackOk = await startPlayback(focusPlaylistId);
+            if (!playbackOk) {
+                // Abort — no active Spotify device
+                stopProgressAnimation();
+                isInSession = false;
+                startBtn.style.display = 'block';
+                stopBtn.style.display = 'none';
+                focusDurationInput.disabled = false;
+                breakDurationInput.disabled = false;
+                updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
+                showError('Please open Spotify on any device and play any song first, then click Start again.');
+                return;
+            }
+
             sessionTimer = setTimeout(async () => {
                 await endFocusSession();
             }, focusDuration);
-            
-            // Start checking for comm slots every minute
+
             if (!commCheckInterval) {
-                commCheckInterval = setInterval(checkCommSlots, 60000); // Check every minute
+                commCheckInterval = setInterval(checkCommSlots, 60000);
             }
         }
         
@@ -1040,26 +1100,25 @@
             // Start break progress animation
             startProgressAnimation(breakDuration);
             
-            setTimeout(async () => {
+            transitionPlaybackTimeout = setTimeout(async () => {
+                transitionPlaybackTimeout = null;
                 await startPlayback(breakPlaylistId);
             }, 3000);
-            
+
             sessionTimer = setTimeout(async () => {
-                // Check again if comm slot started during break
                 const slotDuringBreak = getActiveCommSlot();
                 if (slotDuringBreak) {
                     await startCommSlot(slotDuringBreak);
                     return;
                 }
-                
+
                 stopProgressAnimation();
                 await pausePlayback();
                 playNotificationSound();
-                setTimeout(() => {
-                    speak('Break is over, back to focus');
-                }, 500);
-                
-                setTimeout(() => {
+                setTimeout(() => { speak('Break is over, back to focus'); }, 500);
+
+                transitionNextSessionTimeout = setTimeout(() => {
+                    transitionNextSessionTimeout = null;
                     startFocusSession();
                 }, 3000);
             }, breakDuration);
@@ -1071,16 +1130,23 @@
                 clearTimeout(sessionTimer);
                 sessionTimer = null;
             }
-            
+
+            if (transitionPlaybackTimeout) {
+                clearTimeout(transitionPlaybackTimeout);
+                transitionPlaybackTimeout = null;
+            }
+
+            if (transitionNextSessionTimeout) {
+                clearTimeout(transitionNextSessionTimeout);
+                transitionNextSessionTimeout = null;
+            }
+
             if (commCheckInterval) {
                 clearInterval(commCheckInterval);
                 commCheckInterval = null;
             }
-            
+
             currentCommSlot = null;
-            isPaused = false;
-            pausedTimeRemaining = 0;
-            pausedSessionType = null;
             stopProgressAnimation();
             
             // Actually pause the music
@@ -1093,7 +1159,6 @@
             breakDurationInput.disabled = false;
             
             startBtn.style.display = 'block';
-            pauseBtn.style.display = 'none';
             stopBtn.style.display = 'none';
             
             updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
@@ -1129,99 +1194,6 @@
             }
         }
         
-        // Pause session
-        async function pauseSession() {
-            if (!isInSession || isPaused) return;
-            
-            isPaused = true;
-            
-            // Calculate remaining time
-            const elapsed = Date.now() - sessionStartTime;
-            pausedTimeRemaining = sessionDuration - elapsed;
-            
-            // Remember what type of session we were in
-            if (currentCommSlot) {
-                pausedSessionType = 'communication';
-            } else if (statusText.textContent === 'Deep Work Session') {
-                pausedSessionType = 'focus';
-            } else {
-                pausedSessionType = 'break';
-            }
-            
-            // Clear timers
-            if (sessionTimer) {
-                clearTimeout(sessionTimer);
-                sessionTimer = null;
-            }
-            stopProgressAnimation();
-            
-            // Pause music
-            await pausePlayback();
-            
-            // Update UI
-            pauseBtn.textContent = '▶️ Resume Session';
-            updateStatus('PAUSED', 'Session Paused', `${Math.ceil(pausedTimeRemaining / 60000)} minutes remaining`, 'idle');
-        }
-        
-        // Resume session
-        async function resumeSession() {
-            if (!isPaused) return;
-            
-            isPaused = false;
-            
-            // Update UI based on session type
-            if (pausedSessionType === 'focus') {
-                const focusMinutes = Math.ceil(pausedTimeRemaining / 60000);
-                updateStatus('FOCUS MODE', 'Deep Work Session', `${focusMinutes} minutes remaining`, 'focus');
-                await startPlayback(focusPlaylistId);
-            } else if (pausedSessionType === 'break') {
-                const breakMinutes = Math.ceil(pausedTimeRemaining / 60000);
-                updateStatus('BREAK TIME', 'Taking a Break', `${breakMinutes} minutes remaining`, 'break');
-                await startPlayback(breakPlaylistId);
-            } else if (pausedSessionType === 'communication') {
-                const commMinutes = Math.ceil(pausedTimeRemaining / 60000);
-                updateStatus('COMMUNICATION', 'Communication Slot', `${commMinutes} minutes remaining`, 'break');
-                await startPlayback(breakPlaylistId);
-            }
-            
-            // Restart progress animation
-            sessionStartTime = Date.now();
-            sessionDuration = pausedTimeRemaining;
-            startProgressAnimation(pausedTimeRemaining);
-            
-            // Set new timer
-            sessionTimer = setTimeout(async () => {
-                if (pausedSessionType === 'focus') {
-                    await endFocusSession();
-                } else if (pausedSessionType === 'break') {
-                    // Break ended, start focus
-                    stopProgressAnimation();
-                    await pausePlayback();
-                    playNotificationSound();
-                    setTimeout(() => {
-                        speak('Break is over, back to focus');
-                    }, 500);
-                    setTimeout(() => {
-                        startFocusSession();
-                    }, 3000);
-                } else if (pausedSessionType === 'communication') {
-                    await endCommSlot();
-                }
-            }, pausedTimeRemaining);
-            
-            // Update button
-            pauseBtn.textContent = '⏸ Pause Session';
-        }
-        
-        // Toggle pause/resume
-        async function togglePause() {
-            if (isPaused) {
-                await resumeSession();
-            } else {
-                await pauseSession();
-            }
-        }
-        
         // Update session count display
         function updateSessionCount() {
             sessionCountEl.textContent = sessionCount;
@@ -1239,7 +1211,6 @@
                 startFocusSession();
             }
         });
-        pauseBtn.addEventListener('click', togglePause);
         stopBtn.addEventListener('click', () => stopSession());
         callBtn.addEventListener('click', toggleCallMode);
         

@@ -2,7 +2,7 @@
   "name": "Focus Timer - Spotify Productivity",
   "short_name": "Focus Timer",
   "description": "Spotify-powered productivity timer with customizable focus and break sessions",
-  "start_url": "./spotify_focus_timer.html",
+  "start_url": "./spotify-focus-timer-pkce.html",
   "display": "standalone",
   "background_color": "#0a0e27",
   "theme_color": "#1db954",
