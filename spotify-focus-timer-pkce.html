@@ -283,7 +283,8 @@
             font-weight: 500;
         }
         
-        .setting-group input[type="number"] {
+        .setting-group input[type="number"],
+        .setting-group input[type="url"] {
             width: 100%;
             padding: 0.75rem;
             background: rgba(255, 255, 255, 0.05);
@@ -291,13 +292,28 @@
             border-radius: 8px;
             color: var(--text);
             font-family: 'DM Mono', monospace;
-            font-size: 1rem;
+            font-size: 0.85rem;
         }
-        
-        .setting-group input[type="number"]:focus {
+
+        .setting-group input[type="number"]:focus,
+        .setting-group input[type="url"]:focus {
             outline: none;
             border-color: var(--accent);
             background: rgba(255, 255, 255, 0.08);
+        }
+
+        .setting-group input[type="url"]::placeholder {
+            color: var(--text-dim);
+            font-size: 0.8rem;
+        }
+
+        .yt-section-title {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--break-color);
+            font-weight: 700;
+            margin-bottom: 1rem;
         }
         
         #login-section { display: none; }
@@ -432,6 +448,24 @@
             <div id="app-section">
                 <div id="premium-warning" class="warning" style="display: none;">⚠️ Spotify Free detected — switching to YouTube mode for music playback.</div>
                 <div id="error-msg" class="error" style="display: none;"></div>
+
+                <div id="youtube-section" style="display: none;">
+                    <div class="settings">
+                        <div class="yt-section-title">🎬 YouTube Mode</div>
+                        <div class="setting-group">
+                            <label for="yt-focus-url">Focus playlist URL:</label>
+                            <input type="url" id="yt-focus-url"
+                                value="https://www.youtube.com/watch?v=u2ah9tWTkmk&list=PL4QNnZJr8sRPmuz_d87ygGR6YAYEF-fmw"
+                                placeholder="https://www.youtube.com/watch?v=...&list=...">
+                        </div>
+                        <div class="setting-group">
+                            <label for="yt-break-url">Break playlist URL:</label>
+                            <input type="url" id="yt-break-url"
+                                value="https://www.youtube.com/watch?v=r0c9Q21AfLA&list=PLvZ8_HnTraXnQZ70T2ZEet6i-bSo381zV"
+                                placeholder="https://www.youtube.com/watch?v=...&list=...">
+                        </div>
+                    </div>
+                </div>
                 
                 <div class="settings">
                     <div class="setting-group">
@@ -501,6 +535,8 @@
 
         let accessToken = null;
         let isPremium = true;
+        let ytPlayer = null;
+        let ytPlayerReady = false;
         let sessionTimer = null;
         let sessionCount = 0;
         let isInSession = false;
@@ -533,6 +569,9 @@
         const breakDurationInput = document.getElementById('break-duration');
         const progressBar = document.getElementById('progress-bar');
         const premiumWarning = document.getElementById('premium-warning');
+        const youtubeSection = document.getElementById('youtube-section');
+        const focusYtInput = document.getElementById('yt-focus-url');
+        const breakYtInput = document.getElementById('yt-break-url');
         const commSlotsEnabledCheckbox = document.getElementById('comm-slots-enabled');
         const commSlotsConfig = document.getElementById('comm-slots-config');
         const commSlotsList = document.getElementById('comm-slots-list');
@@ -743,6 +782,55 @@
             return true;
         }
         
+        // YouTube IFrame API
+        function loadYouTubeAPI() {
+            if (document.getElementById('yt-api-script')) return;
+            window.onYouTubeIframeAPIReady = function() {
+                ytPlayer = new YT.Player('yt-player', {
+                    height: '1',
+                    width: '1',
+                    playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0, modestbranding: 1 },
+                    events: { onReady: () => { ytPlayerReady = true; } }
+                });
+            };
+            const tag = document.createElement('script');
+            tag.id = 'yt-api-script';
+            tag.src = 'https://www.youtube.com/iframe_api';
+            document.head.appendChild(tag);
+        }
+
+        function ytPlayUrl(url) {
+            if (!ytPlayer || !ytPlayerReady) return;
+            try {
+                const u = new URL(url);
+                const listId = u.searchParams.get('list');
+                const videoId = u.searchParams.get('v');
+                if (listId) {
+                    ytPlayer.loadPlaylist({ list: listId, listType: 'playlist', index: 0, startSeconds: 0 });
+                } else if (videoId) {
+                    ytPlayer.loadVideoById(videoId);
+                }
+            } catch (e) {
+                console.error('Invalid YouTube URL:', url, e);
+            }
+        }
+
+        function ytStop() {
+            if (ytPlayer && ytPlayerReady) ytPlayer.stopVideo();
+        }
+
+        function saveYtUrls() {
+            localStorage.setItem('yt_focus_url', focusYtInput.value);
+            localStorage.setItem('yt_break_url', breakYtInput.value);
+        }
+
+        function loadYtUrls() {
+            const savedFocus = localStorage.getItem('yt_focus_url');
+            const savedBreak = localStorage.getItem('yt_break_url');
+            if (savedFocus) focusYtInput.value = savedFocus;
+            if (savedBreak) breakYtInput.value = savedBreak;
+        }
+
         // Check if user has Spotify Premium
         async function checkPremium() {
             try {
@@ -754,6 +842,9 @@
                 isPremium = data.product === 'premium';
                 if (!isPremium) {
                     premiumWarning.style.display = 'block';
+                    youtubeSection.style.display = 'block';
+                    loadYtUrls();
+                    loadYouTubeAPI();
                 }
             } catch (e) {
                 // Non-fatal — proceed assuming premium
@@ -763,6 +854,7 @@
         // Initialize app (find or auto-create Focus and Break playlists)
         async function initializeApp() {
             await checkPremium();
+            if (!isPremium) return; // YouTube mode — no Spotify playlists needed
             try {
                 const playlists = await getPlaylists();
 
@@ -913,8 +1005,12 @@
             return items;
         }
         
-        // Start playback with specific playlist. Returns true on success, false if no device (404).
-        async function startPlayback(playlistId) {
+        // Start playback. type = 'focus' | 'break'. Returns true on success, false on failure.
+        async function startPlayback(playlistId, type = 'focus') {
+            if (!isPremium) {
+                ytPlayUrl(type === 'focus' ? focusYtInput.value : breakYtInput.value);
+                return true;
+            }
             await ensureValidToken();
 
             const body = JSON.stringify({ context_uri: `spotify:playlist:${playlistId}`, position_ms: 0 });
@@ -947,8 +1043,12 @@
             }
         }
         
-        // Pause playback
+        // Pause/stop playback
         async function pausePlayback() {
+            if (!isPremium) {
+                ytStop();
+                return;
+            }
             try {
                 const response = await fetch('https://api.spotify.com/v1/me/player/pause', {
                     method: 'PUT',
@@ -1141,7 +1241,7 @@
             updateStatus('COMMUNICATION', 'Communication Slot', 'Time for emails and messages', 'break');
             speak('Communication slot started');
 
-            const playbackOk = await startPlayback(breakPlaylistId);
+            const playbackOk = await startPlayback(breakPlaylistId, 'break');
             if (!playbackOk) {
                 currentCommSlot = null;
                 isInSession = false;
@@ -1224,7 +1324,7 @@
             updateStatus('FOCUS MODE', 'Deep Work Session', `${focusMinutes} minutes of focused work`, 'focus');
             startProgressAnimation(focusDuration);
 
-            const playbackOk = await startPlayback(focusPlaylistId);
+            const playbackOk = await startPlayback(focusPlaylistId, 'focus');
             if (!playbackOk) {
                 // Abort — no active Spotify device
                 stopProgressAnimation();
@@ -1281,7 +1381,7 @@
             
             transitionPlaybackTimeout = setTimeout(async () => {
                 transitionPlaybackTimeout = null;
-                await startPlayback(breakPlaylistId);
+                await startPlayback(breakPlaylistId, 'break');
             }, 3000);
 
             sessionTimer = setTimeout(async () => {
@@ -1397,6 +1497,9 @@
         stopBtn.addEventListener('click', () => stopSession());
         callBtn.addEventListener('click', toggleCallMode);
 
+        focusYtInput.addEventListener('change', saveYtUrls);
+        breakYtInput.addEventListener('change', saveYtUrls);
+
         commSlotsEnabledCheckbox.addEventListener('change', () => {
             commSlotsConfig.style.display = commSlotsEnabledCheckbox.checked ? 'block' : 'none';
             saveCommSlotsConfig();
@@ -1430,5 +1533,7 @@
             }
         });
     </script>
+    <!-- Hidden YouTube IFrame Player (replaced by YT API) -->
+    <div id="yt-player" style="position:fixed;width:1px;height:1px;bottom:0;right:0;opacity:0;pointer-events:none;"></div>
 </body>
 </html>
