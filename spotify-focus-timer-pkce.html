@@ -1019,7 +1019,16 @@
             { hour: 15, minute: 30 }
         ];
 
+        const MAX_SLOTS = 6;
+
+        function updateAddSlotBtn() {
+            const count = commSlotsList.querySelectorAll('.comm-slot-row').length;
+            addSlotBtn.disabled = count >= MAX_SLOTS;
+            addSlotBtn.title = count >= MAX_SLOTS ? `Maximum ${MAX_SLOTS} slots` : '';
+        }
+
         function addSlotRow(hour = 9, minute = 0) {
+            if (commSlotsList.querySelectorAll('.comm-slot-row').length >= MAX_SLOTS) return;
             const row = document.createElement('div');
             row.className = 'comm-slot-row';
             const val = String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
@@ -1027,9 +1036,11 @@
             row.querySelector('input[type="time"]').addEventListener('change', saveCommSlotsConfig);
             row.querySelector('.btn-remove-slot').addEventListener('click', () => {
                 row.remove();
+                updateAddSlotBtn();
                 saveCommSlotsConfig();
             });
             commSlotsList.appendChild(row);
+            updateAddSlotBtn();
         }
 
         function getCommSlots() {
@@ -1049,7 +1060,7 @@
         }
 
         function loadCommSlotsConfig() {
-            const enabled = localStorage.getItem('comm_slots_enabled') !== 'false';
+            const enabled = localStorage.getItem('comm_slots_enabled') === 'true';
             commSlotsEnabledCheckbox.checked = enabled;
             commSlotsConfig.style.display = enabled ? 'block' : 'none';
 
@@ -1061,6 +1072,7 @@
 
             commSlotsList.innerHTML = '';
             slots.forEach(s => addSlotRow(s.hour, s.minute));
+            updateAddSlotBtn();
         }
 
         // Check if we're in an active communication slot
