@@ -390,6 +390,16 @@
             font-size: 0.9rem;
         }
 
+        .warning {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            color: #fcd34d;
+            padding: 1rem;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+
         .pulse {
             animation: pulse 2s ease-in-out infinite;
         }
@@ -420,6 +430,7 @@
             </div>
             
             <div id="app-section">
+                <div id="premium-warning" class="warning" style="display: none;">⚠️ Spotify Free detected — switching to YouTube mode for music playback.</div>
                 <div id="error-msg" class="error" style="display: none;"></div>
                 
                 <div class="settings">
@@ -489,6 +500,7 @@
         const COMM_WARNING_TIME = 3 * 60 * 1000; // 3 minutes before comm slot ends
 
         let accessToken = null;
+        let isPremium = true;
         let sessionTimer = null;
         let sessionCount = 0;
         let isInSession = false;
@@ -520,6 +532,7 @@
         const focusDurationInput = document.getElementById('focus-duration');
         const breakDurationInput = document.getElementById('break-duration');
         const progressBar = document.getElementById('progress-bar');
+        const premiumWarning = document.getElementById('premium-warning');
         const commSlotsEnabledCheckbox = document.getElementById('comm-slots-enabled');
         const commSlotsConfig = document.getElementById('comm-slots-config');
         const commSlotsList = document.getElementById('comm-slots-list');
@@ -730,8 +743,26 @@
             return true;
         }
         
+        // Check if user has Spotify Premium
+        async function checkPremium() {
+            try {
+                const response = await fetch('https://api.spotify.com/v1/me', {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                if (!response.ok) return;
+                const data = await response.json();
+                isPremium = data.product === 'premium';
+                if (!isPremium) {
+                    premiumWarning.style.display = 'block';
+                }
+            } catch (e) {
+                // Non-fatal — proceed assuming premium
+            }
+        }
+
         // Initialize app (find or auto-create Focus and Break playlists)
         async function initializeApp() {
+            await checkPremium();
             try {
                 const playlists = await getPlaylists();
 
