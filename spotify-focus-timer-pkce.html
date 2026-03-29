@@ -1027,12 +1027,19 @@
         // Check if user has Spotify Premium
         async function checkPremium() {
             try {
+                await ensureValidToken();
                 const response = await fetch('https://api.spotify.com/v1/me', {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 });
-                if (!response.ok) return;
                 const data = await response.json();
-                isPremium = data.product === 'premium';
+                // If product is undefined (bad token, API error, scope issue), default to premium
+                // Only treat as free if the API explicitly returns "free" or "open"
+                const product = data.product;
+                if (product === undefined) {
+                    isPremium = true; // safe default — don't penalise on API ambiguity
+                    return;
+                }
+                isPremium = product === 'premium';
                 if (!isPremium) {
                     if (localStorage.getItem('yt_free_accepted') === 'true') {
                         activateYouTubeMode();
@@ -1041,7 +1048,7 @@
                     }
                 }
             } catch (e) {
-                // Non-fatal — proceed assuming premium
+                isPremium = true; // Non-fatal — proceed assuming premium
             }
         }
 
