@@ -406,30 +406,76 @@
             font-size: 0.9rem;
         }
 
-        .btn-dev-toggle {
-            display: block;
+        #free-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        #free-modal.show {
+            display: flex !important;
+        }
+
+        .free-modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(10, 14, 39, 0.88);
+            backdrop-filter: blur(4px);
+        }
+
+        .free-modal-box {
+            position: relative;
+            z-index: 1;
+            background: var(--bg-card);
+            border-radius: 24px;
+            padding: 2.5rem;
+            max-width: 460px;
             width: 100%;
-            margin-top: 2rem;
-            padding: 0.5rem;
-            background: none;
-            border: 1px dashed rgba(255, 255, 255, 0.15);
-            border-radius: 8px;
-            color: rgba(255, 255, 255, 0.3);
-            font-family: 'DM Mono', monospace;
-            font-size: 0.75rem;
-            cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+        }
+
+        .free-modal-title {
+            font-family: 'Space Mono', monospace;
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: var(--text);
+            line-height: 1.3;
+        }
+
+        .free-modal-msg {
+            font-size: 0.88rem;
+            color: var(--text-dim);
+            line-height: 1.65;
+            margin-bottom: 1.75rem;
+        }
+
+        .free-modal-box .btn {
+            display: block;
             text-align: center;
-            letter-spacing: 0.5px;
+            text-decoration: none;
+            margin-bottom: 0.75rem;
         }
 
-        .btn-dev-toggle:hover {
-            border-color: rgba(255, 255, 255, 0.3);
-            color: rgba(255, 255, 255, 0.5);
+        .free-modal-box .btn:last-child {
+            margin-bottom: 0;
         }
 
-        .btn-dev-toggle.active {
-            border-color: var(--break-color);
-            color: var(--break-color);
+        .btn-free-yt {
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-dim);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.88rem;
+        }
+
+        .btn-free-yt:hover {
+            background: rgba(255, 255, 255, 0.07);
+            color: var(--text);
         }
 
         .warning {
@@ -472,7 +518,7 @@
             </div>
             
             <div id="app-section">
-                <div id="premium-warning" class="warning" style="display: none;">⚠️ Spotify Free detected — switching to YouTube mode for music playback.</div>
+                <div id="premium-warning" class="warning" style="display: none;"></div>
                 <div id="error-msg" class="error" style="display: none;"></div>
 
                 <div id="youtube-section" style="display: none;">
@@ -544,8 +590,18 @@
                     </div>
                 </div>
 
-                <button id="dev-yt-toggle" class="btn-dev-toggle">🛠 DEV: Toggle YouTube Mode</button>
             </div>
+        </div>
+    </div>
+
+    <div id="free-modal">
+        <div class="free-modal-backdrop"></div>
+        <div class="free-modal-box">
+            <div class="free-modal-title">Premium Required for Best Experience</div>
+            <p class="free-modal-msg">This app works best with Spotify Premium or YouTube Premium for uninterrupted music. Choose how you'd like to continue:</p>
+            <a href="https://www.spotify.com/premium" target="_blank" rel="noopener" class="btn btn-primary">Use Spotify Premium</a>
+            <a href="https://www.youtube.com/premium" target="_blank" rel="noopener" class="btn btn-secondary">Use YouTube Premium</a>
+            <button id="free-yt-btn" class="btn btn-free-yt">Continue with Free YouTube (ads apply)</button>
         </div>
     </div>
 
@@ -598,6 +654,7 @@
         const progressBar = document.getElementById('progress-bar');
         const premiumWarning = document.getElementById('premium-warning');
         const youtubeSection = document.getElementById('youtube-section');
+        const freeModal = document.getElementById('free-modal');
         const focusYtInput = document.getElementById('yt-focus-url');
         const breakYtInput = document.getElementById('yt-break-url');
         const commSlotsEnabledCheckbox = document.getElementById('comm-slots-enabled');
@@ -859,6 +916,15 @@
             if (savedBreak) breakYtInput.value = savedBreak;
         }
 
+        function activateYouTubeMode() {
+            isPremium = false;
+            premiumWarning.textContent = '⚠️ YouTube free tier — ads may interrupt sessions';
+            premiumWarning.style.display = 'block';
+            youtubeSection.style.display = 'block';
+            loadYtUrls();
+            loadYouTubeAPI();
+        }
+
         // Check if user has Spotify Premium
         async function checkPremium() {
             try {
@@ -869,10 +935,11 @@
                 const data = await response.json();
                 isPremium = data.product === 'premium';
                 if (!isPremium) {
-                    premiumWarning.style.display = 'block';
-                    youtubeSection.style.display = 'block';
-                    loadYtUrls();
-                    loadYouTubeAPI();
+                    if (localStorage.getItem('yt_free_accepted') === 'true') {
+                        activateYouTubeMode();
+                    } else {
+                        freeModal.classList.add('show');
+                    }
                 }
             } catch (e) {
                 // Non-fatal — proceed assuming premium
@@ -1528,19 +1595,10 @@
         focusYtInput.addEventListener('change', saveYtUrls);
         breakYtInput.addEventListener('change', saveYtUrls);
 
-        // DEV: force YouTube mode for testing without a free account
-        document.getElementById('dev-yt-toggle').addEventListener('click', function() {
-            isPremium = !isPremium;
-            this.classList.toggle('active', !isPremium);
-            if (!isPremium) {
-                premiumWarning.style.display = 'block';
-                youtubeSection.style.display = 'block';
-                loadYtUrls();
-                loadYouTubeAPI();
-            } else {
-                premiumWarning.style.display = 'none';
-                youtubeSection.style.display = 'none';
-            }
+        document.getElementById('free-yt-btn').addEventListener('click', () => {
+            localStorage.setItem('yt_free_accepted', 'true');
+            freeModal.classList.remove('show');
+            activateYouTubeMode();
         });
 
         commSlotsEnabledCheckbox.addEventListener('change', () => {
