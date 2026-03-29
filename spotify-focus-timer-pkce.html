@@ -686,9 +686,9 @@
     <div id="free-modal">
         <div class="free-modal-backdrop"></div>
         <div class="free-modal-box">
-            <div class="free-modal-title">Premium Required for Best Experience</div>
-            <p class="free-modal-msg">This app works best with Spotify Premium or YouTube Premium for uninterrupted music. Choose how you'd like to continue:</p>
-            <a href="https://www.spotify.com/premium" target="_blank" rel="noopener" class="btn btn-primary">Use Spotify Premium</a>
+            <div class="free-modal-title">Spotify Free Account Detected</div>
+            <p class="free-modal-msg">This app uses Spotify playback controls which require a Premium account. You can switch to YouTube mode instead — it works with any account.</p>
+            <button id="free-back-btn" class="btn btn-secondary">← Back to Service Selector</button>
             <p class="free-modal-yt-note">YouTube Premium reduces ads but is not required. You can continue with free YouTube.</p>
             <button id="free-yt-btn" class="btn btn-free-yt">Continue with Free YouTube (ads apply)</button>
         </div>
@@ -1691,6 +1691,16 @@
 
         focusYtInput.addEventListener('change', saveYtUrls);
         breakYtInput.addEventListener('change', saveYtUrls);
+
+        document.getElementById('free-back-btn').addEventListener('click', () => {
+            freeModal.classList.remove('show');
+            // Clear auth so service selector shows cleanly
+            ['spotify_token', 'refresh_token', 'token_expiry', 'code_verifier'].forEach(k => localStorage.removeItem(k));
+            accessToken = null;
+            isPremium = true;
+            appSection.classList.remove('show');
+            loginSection.classList.add('show');
+        });
 
         document.getElementById('free-yt-btn').addEventListener('click', () => {
             localStorage.setItem('yt_free_accepted', 'true');
