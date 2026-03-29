@@ -505,6 +505,14 @@
             font-size: 0.9rem;
         }
 
+        .tip-text {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-top: 0.75rem;
+            line-height: 1.5;
+            opacity: 0.8;
+        }
+
         .pulse {
             animation: pulse 2s ease-in-out infinite;
         }
@@ -519,7 +527,7 @@
     <div class="container">
         <div class="card">
             <h1>Focus Timer</h1>
-            <p class="subtitle">Spotify-powered productivity sessions</p>
+            <p class="subtitle">Your Music Timer</p>
             
             <div id="login-section">
                 <div class="info">
@@ -532,6 +540,7 @@
                     </div>
                 </div>
                 <button id="login-btn" class="btn btn-primary">Connect Spotify</button>
+                <p class="tip-text">Tip: Keep Spotify open in another tab or on any device before starting a session</p>
             </div>
             
             <div id="app-section">
@@ -555,6 +564,7 @@
                         </div>
                     </div>
                     <div id="yt-player" class="yt-player-embed"></div>
+                    <p class="tip-text">Tip: YouTube must be open in another tab for playback to work</p>
                 </div>
                 
                 <div class="settings">
@@ -571,6 +581,7 @@
                             <input type="checkbox" id="comm-slots-enabled">
                             Communication slot interruptions
                         </label>
+                        <p class="tip-text" style="margin-top: 0.4rem;">Automatically pauses focus at set times for emails, messages and calls. Toggle on and set your preferred times.</p>
                     </div>
                     <div id="comm-slots-config" class="comm-slots-config" style="display: none;">
                         <p class="slots-hint">Interrupts sessions at these times for 30-min communication blocks.</p>
@@ -925,7 +936,7 @@
                     ytPlayer.loadVideoById(videoId);
                 }
             } catch (e) {
-                console.error('Invalid YouTube URL:', url, e);
+                // invalid URL — silently skip
             }
         }
 
@@ -1181,11 +1192,9 @@
                 });
                 
                 // 404 means no active device, which is fine when stopping
-                if (!response.ok && response.status !== 404) {
-                    console.error('Failed to pause playback:', response.status);
-                }
+                // 404 = no active device, ignore; other errors silently ignored on stop
             } catch (error) {
-                console.error('Failed to pause playback:', error);
+                // silently ignore pause errors
             }
         }
         
@@ -1647,8 +1656,8 @@
         // Register service worker for PWA
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('./sw.js')
-                .then(() => console.log('Service Worker registered'))
-                .catch((err) => console.log('Service Worker registration failed:', err));
+                .then(() => {})
+                .catch(() => {});
         }
         
         // Handle page visibility changes (laptop wake from sleep)
