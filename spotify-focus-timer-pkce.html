@@ -513,6 +513,38 @@
             opacity: 0.8;
         }
 
+        .btn-switch-service {
+            width: auto;
+            padding: 0.4rem 0.85rem;
+            font-size: 0.78rem;
+            background: transparent;
+            color: var(--text-dim);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: 'DM Mono', monospace;
+            letter-spacing: 0;
+            text-transform: none;
+            transition: all 0.2s ease;
+            display: block;
+            margin-left: auto;
+            margin-bottom: 1.25rem;
+        }
+
+        .btn-switch-service:hover {
+            color: var(--text);
+            border-color: rgba(255, 255, 255, 0.35);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .login-status-note {
+            font-size: 0.82rem;
+            color: var(--accent);
+            margin-bottom: 0.75rem;
+            text-align: center;
+            opacity: 0.85;
+        }
+
         .pulse {
             animation: pulse 2s ease-in-out infinite;
         }
@@ -539,11 +571,13 @@
                         switch between them.
                     </div>
                 </div>
+                <p id="login-status-note" class="login-status-note" style="display: none;">✓ Already connected — click to continue</p>
                 <button id="login-btn" class="btn btn-primary">Connect Spotify</button>
                 <p class="tip-text">Tip: Keep Spotify open in another tab or on any device before starting a session</p>
             </div>
             
             <div id="app-section">
+                <button id="switch-service-btn" class="btn-switch-service">⚙ Change Music Source</button>
                 <div id="premium-warning" class="warning" style="display: none;"></div>
                 <div id="error-msg" class="error" style="display: none;"></div>
 
@@ -732,23 +766,24 @@
                 return;
             }
 
-            // Check if we're returning from Spotify auth
+            // Check if we're returning from Spotify auth (OAuth callback)
             const urlParams = new URLSearchParams(window.location.search);
             const code = urlParams.get('code');
-            
+
             if (code) {
-                // Exchange code for access token
+                // Exchange code for access token, then proceed to app
                 await exchangeCodeForToken(code);
-                // Clean URL
                 window.history.replaceState({}, document.title, window.location.pathname);
-            } else if (localStorage.getItem('spotify_token')) {
-                accessToken = localStorage.getItem('spotify_token');
-                showApp();
-                await initializeApp();
             } else {
+                // Always show login screen first.
+                // If a stored token exists, update the button so user can continue without re-auth.
                 loginSection.classList.add('show');
+                if (localStorage.getItem('spotify_token')) {
+                    loginBtn.textContent = 'Continue';
+                    document.getElementById('login-status-note').style.display = 'block';
+                }
             }
-            
+
             // Load session count
             const savedCount = localStorage.getItem('session_count_' + new Date().toDateString());
             sessionCount = savedCount ? parseInt(savedCount) : 0;
@@ -764,13 +799,21 @@
         
         // Spotify Authentication with PKCE
         loginBtn.addEventListener('click', async () => {
+            // If a token is already stored, skip OAuth and go straight to the app
+            if (localStorage.getItem('spotify_token')) {
+                accessToken = localStorage.getItem('spotify_token');
+                showApp();
+                await initializeApp();
+                return;
+            }
+
             const codeVerifier = generateRandomString(64);
             const hashed = await sha256(codeVerifier);
             const codeChallenge = base64encode(hashed);
-            
+
             // Store code verifier for later
             localStorage.setItem('code_verifier', codeVerifier);
-            
+
             const authUrl = new URL('https://accounts.spotify.com/authorize');
             authUrl.searchParams.append('client_id', CLIENT_ID);
             authUrl.searchParams.append('response_type', 'code');
@@ -778,7 +821,7 @@
             authUrl.searchParams.append('scope', SCOPES);
             authUrl.searchParams.append('code_challenge_method', 'S256');
             authUrl.searchParams.append('code_challenge', codeChallenge);
-            
+
             window.location.href = authUrl.toString();
         });
         
@@ -1649,7 +1692,27 @@
             addSlotRow();
             saveCommSlotsConfig();
         });
-        
+
+        document.getElementById('switch-service-btn').addEventListener('click', () => {
+            // Clear auth and service selection so user can start fresh
+            localStorage.removeItem('yt_free_accepted');
+            localStorage.removeItem('spotify_token');
+            localStorage.removeItem('refresh_token');
+            localStorage.removeItem('token_expiry');
+            localStorage.removeItem('code_verifier');
+            accessToken = null;
+            isPremium = true;
+            // Reset UI to login screen
+            appSection.classList.remove('show');
+            loginSection.classList.add('show');
+            loginBtn.textContent = 'Connect Spotify';
+            document.getElementById('login-status-note').style.display = 'none';
+            // Reset app-section state
+            premiumWarning.style.display = 'none';
+            youtubeSection.style.display = 'none';
+            freeModal.classList.remove('show');
+        });
+
         // Initialize on load
         init();
         
