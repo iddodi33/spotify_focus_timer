@@ -537,12 +537,29 @@
             background: rgba(255, 255, 255, 0.05);
         }
 
-        .login-status-note {
+        .service-selector-label {
             font-size: 0.82rem;
-            color: var(--accent);
-            margin-bottom: 0.75rem;
+            color: var(--text-dim);
             text-align: center;
-            opacity: 0.85;
+            margin-bottom: 1.25rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+        }
+
+        .service-btn {
+            margin-bottom: 0.75rem;
+        }
+
+        .service-btn:last-child {
+            margin-bottom: 0;
+        }
+
+        .coming-soon {
+            font-size: 0.75em;
+            opacity: 0.7;
+            font-weight: 400;
+            text-transform: none;
+            letter-spacing: 0;
         }
 
         .pulse {
@@ -562,18 +579,10 @@
             <p class="subtitle">Your Music Timer</p>
             
             <div id="login-section">
-                <div class="info">
-                    <div class="info-title">How it works</div>
-                    <div class="info-text">
-                        Connect your Spotify account to start 30-minute focus sessions. 
-                        Create two playlists: one called "Focus" with your work music, 
-                        and one called "Break" with your break music. The app will automatically 
-                        switch between them.
-                    </div>
-                </div>
-                <p id="login-status-note" class="login-status-note" style="display: none;">✓ Already connected — click to continue</p>
-                <button id="login-btn" class="btn btn-primary">Connect Spotify</button>
-                <p class="tip-text">Tip: Keep Spotify open in another tab or on any device before starting a session</p>
+                <p class="service-selector-label">Choose your music service</p>
+                <button id="login-btn" class="btn btn-primary service-btn">Connect Spotify</button>
+                <button id="yt-service-btn" class="btn btn-secondary service-btn">Use YouTube</button>
+                <button class="btn btn-secondary service-btn" disabled>Use Apple Music <span class="coming-soon">(coming soon)</span></button>
             </div>
             
             <div id="app-section">
@@ -774,14 +783,18 @@
                 // Exchange code for access token, then proceed to app
                 await exchangeCodeForToken(code);
                 window.history.replaceState({}, document.title, window.location.pathname);
+            } else if (localStorage.getItem('spotify_token')) {
+                // Spotify was previously connected — proceed directly to app
+                accessToken = localStorage.getItem('spotify_token');
+                showApp();
+                await initializeApp();
+            } else if (localStorage.getItem('yt_free_accepted') === 'true') {
+                // YouTube was previously chosen — proceed directly to YouTube mode
+                showApp();
+                activateYouTubeMode();
             } else {
-                // Always show login screen first.
-                // If a stored token exists, update the button so user can continue without re-auth.
+                // No service chosen yet — show the service selector
                 loginSection.classList.add('show');
-                if (localStorage.getItem('spotify_token')) {
-                    loginBtn.textContent = 'Continue';
-                    document.getElementById('login-status-note').style.display = 'block';
-                }
             }
 
             // Load session count
@@ -799,14 +812,6 @@
         
         // Spotify Authentication with PKCE
         loginBtn.addEventListener('click', async () => {
-            // If a token is already stored, skip OAuth and go straight to the app
-            if (localStorage.getItem('spotify_token')) {
-                accessToken = localStorage.getItem('spotify_token');
-                showApp();
-                await initializeApp();
-                return;
-            }
-
             const codeVerifier = generateRandomString(64);
             const hashed = await sha256(codeVerifier);
             const codeChallenge = base64encode(hashed);
@@ -1693,24 +1698,27 @@
             saveCommSlotsConfig();
         });
 
+        document.getElementById('yt-service-btn').addEventListener('click', () => {
+            localStorage.setItem('yt_free_accepted', 'true');
+            showApp();
+            activateYouTubeMode();
+        });
+
         document.getElementById('switch-service-btn').addEventListener('click', () => {
-            // Clear auth and service selection so user can start fresh
-            localStorage.removeItem('yt_free_accepted');
-            localStorage.removeItem('spotify_token');
-            localStorage.removeItem('refresh_token');
-            localStorage.removeItem('token_expiry');
-            localStorage.removeItem('code_verifier');
+            // Clear all service-selection and auth keys so the selector appears again
+            ['yt_free_accepted', 'spotify_token', 'refresh_token',
+             'token_expiry', 'code_verifier'].forEach(k => localStorage.removeItem(k));
             accessToken = null;
             isPremium = true;
-            // Reset UI to login screen
-            appSection.classList.remove('show');
-            loginSection.classList.add('show');
-            loginBtn.textContent = 'Connect Spotify';
-            document.getElementById('login-status-note').style.display = 'none';
+            // Stop any running session
+            stopSession();
             // Reset app-section state
             premiumWarning.style.display = 'none';
             youtubeSection.style.display = 'none';
             freeModal.classList.remove('show');
+            // Return to service selector
+            appSection.classList.remove('show');
+            loginSection.classList.add('show');
         });
 
         // Initialize on load
