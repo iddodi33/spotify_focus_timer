@@ -333,9 +333,11 @@
             margin-bottom: 1rem;
         }
         
-        #login-section { display: none; }
-        #app-section { display: none; }
+        #login-section { display: none !important; }
+        #service-selector { display: none !important; }
+        #app-section { display: none !important; }
         #login-section.show { display: block !important; }
+        #service-selector.show { display: block !important; }
         #app-section.show { display: block !important; }
 
         .comm-slots-toggle label {
@@ -481,6 +483,14 @@
 
         .free-modal-box .btn:last-child {
             margin-bottom: 0;
+        }
+
+        .free-modal-yt-note {
+            font-size: 0.82rem;
+            color: var(--text-dim);
+            line-height: 1.5;
+            margin-bottom: 0.75rem;
+            text-align: center;
         }
 
         .btn-free-yt {
@@ -679,7 +689,7 @@
             <div class="free-modal-title">Premium Required for Best Experience</div>
             <p class="free-modal-msg">This app works best with Spotify Premium or YouTube Premium for uninterrupted music. Choose how you'd like to continue:</p>
             <a href="https://www.spotify.com/premium" target="_blank" rel="noopener" class="btn btn-primary">Use Spotify Premium</a>
-            <a href="https://www.youtube.com/premium" target="_blank" rel="noopener" class="btn btn-secondary">Use YouTube Premium</a>
+            <p class="free-modal-yt-note">YouTube Premium reduces ads but is not required. You can continue with free YouTube.</p>
             <button id="free-yt-btn" class="btn btn-free-yt">Continue with Free YouTube (ads apply)</button>
         </div>
     </div>
