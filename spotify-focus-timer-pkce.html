@@ -307,6 +307,23 @@
             font-size: 0.8rem;
         }
 
+        .yt-player-embed {
+            width: 100%;
+            height: 200px;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 1rem;
+            background: #000;
+        }
+
+        .yt-player-embed iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            border-radius: 12px;
+            display: block;
+        }
+
         .yt-section-title {
             font-size: 0.8rem;
             text-transform: uppercase;
@@ -537,6 +554,7 @@
                                 placeholder="https://www.youtube.com/watch?v=...&list=...">
                         </div>
                     </div>
+                    <div id="yt-player" class="yt-player-embed"></div>
                 </div>
                 
                 <div class="settings">
@@ -872,9 +890,9 @@
             if (document.getElementById('yt-api-script')) return;
             window.onYouTubeIframeAPIReady = function() {
                 ytPlayer = new YT.Player('yt-player', {
-                    height: '1',
-                    width: '1',
-                    playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0, modestbranding: 1 },
+                    height: '200',
+                    width: '100%',
+                    playerVars: { autoplay: 0, controls: 1, modestbranding: 1, rel: 0 },
                     events: { onReady: () => { ytPlayerReady = true; } }
                 });
             };
@@ -1634,7 +1652,5 @@
             }
         });
     </script>
-    <!-- Hidden YouTube IFrame Player (replaced by YT API) -->
-    <div id="yt-player" style="position:fixed;width:1px;height:1px;bottom:0;right:0;opacity:0;pointer-events:none;"></div>
 </body>
 </html>
