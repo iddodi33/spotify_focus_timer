@@ -608,6 +608,13 @@
                     </div>
                 </div>
 
+                <div class="info" id="onboarding-info">
+                    <div class="info-title">Before You Start</div>
+                    <div id="onboarding-text" class="info-text">
+                        Make sure Spotify is open and playing on any device before starting a session.
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
@@ -671,6 +678,7 @@
         const breakDurationInput = document.getElementById('break-duration');
         const progressBar = document.getElementById('progress-bar');
         const premiumWarning = document.getElementById('premium-warning');
+        const onboardingText = document.getElementById('onboarding-text');
         const youtubeSection = document.getElementById('youtube-section');
         const freeModal = document.getElementById('free-modal');
         const focusYtInput = document.getElementById('yt-focus-url');
@@ -893,7 +901,10 @@
                     height: '200',
                     width: '100%',
                     playerVars: { autoplay: 0, controls: 1, modestbranding: 1, rel: 0 },
-                    events: { onReady: () => { ytPlayerReady = true; } }
+                    events: {
+                        onReady: () => { ytPlayerReady = true; },
+                        onError: () => { showError('YouTube failed to load. Make sure YouTube is open in another tab and your playlist URLs are valid.'); }
+                    }
                 });
             };
             const tag = document.createElement('script');
@@ -939,6 +950,7 @@
             premiumWarning.textContent = '⚠️ YouTube free tier — ads may interrupt sessions';
             premiumWarning.style.display = 'block';
             youtubeSection.style.display = 'block';
+            onboardingText.textContent = 'Make sure YouTube is open in another tab before starting a session.';
             loadYtUrls();
             loadYouTubeAPI();
         }
@@ -1363,7 +1375,7 @@
                 focusDurationInput.disabled = false;
                 breakDurationInput.disabled = false;
                 updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
-                showError('Please open Spotify on any device and play any song first, then click Start again.');
+                showError('No active Spotify device found. Open Spotify and play any song on any device or in another tab, then click Start again.');
                 return;
             }
             hideError();
@@ -1447,7 +1459,7 @@
                 focusDurationInput.disabled = false;
                 breakDurationInput.disabled = false;
                 updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
-                showError('Please open Spotify on any device and play any song first, then click Start again.');
+                showError('No active Spotify device found. Open Spotify and play any song on any device or in another tab, then click Start again.');
                 return;
             }
             hideError();
