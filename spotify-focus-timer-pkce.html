@@ -406,6 +406,32 @@
             font-size: 0.9rem;
         }
 
+        .btn-dev-toggle {
+            display: block;
+            width: 100%;
+            margin-top: 2rem;
+            padding: 0.5rem;
+            background: none;
+            border: 1px dashed rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            color: rgba(255, 255, 255, 0.3);
+            font-family: 'DM Mono', monospace;
+            font-size: 0.75rem;
+            cursor: pointer;
+            text-align: center;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-dev-toggle:hover {
+            border-color: rgba(255, 255, 255, 0.3);
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .btn-dev-toggle.active {
+            border-color: var(--break-color);
+            color: var(--break-color);
+        }
+
         .warning {
             background: rgba(245, 158, 11, 0.1);
             border: 1px solid rgba(245, 158, 11, 0.35);
@@ -517,6 +543,8 @@
                         🔄 Automatically repeats
                     </div>
                 </div>
+
+                <button id="dev-yt-toggle" class="btn-dev-toggle">🛠 DEV: Toggle YouTube Mode</button>
             </div>
         </div>
     </div>
@@ -1499,6 +1527,21 @@
 
         focusYtInput.addEventListener('change', saveYtUrls);
         breakYtInput.addEventListener('change', saveYtUrls);
+
+        // DEV: force YouTube mode for testing without a free account
+        document.getElementById('dev-yt-toggle').addEventListener('click', function() {
+            isPremium = !isPremium;
+            this.classList.toggle('active', !isPremium);
+            if (!isPremium) {
+                premiumWarning.style.display = 'block';
+                youtubeSection.style.display = 'block';
+                loadYtUrls();
+                loadYouTubeAPI();
+            } else {
+                premiumWarning.style.display = 'none';
+                youtubeSection.style.display = 'none';
+            }
+        });
 
         commSlotsEnabledCheckbox.addEventListener('change', () => {
             commSlotsConfig.style.display = commSlotsEnabledCheckbox.checked ? 'block' : 'none';
