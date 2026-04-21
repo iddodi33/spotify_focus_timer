@@ -725,6 +725,7 @@
         let transitionPlaybackTimeout = null;
         let transitionNextSessionTimeout = null;
         let currentPhase = null; // 'focus' | 'break' | 'comm' | null
+        let notificationTimer = null;
         
         // DOM Elements
         const loginSection = document.getElementById('login-section');
@@ -773,6 +774,23 @@
                 .replace(/\//g, '_');
         }
         
+        // Schedule a push notification after delayMs milliseconds
+        function scheduleNotification(title, body, delayMs) {
+            cancelNotification();
+            if (!('Notification' in window) || Notification.permission !== 'granted') return;
+            notificationTimer = setTimeout(() => {
+                notificationTimer = null;
+                new Notification(title, { body, icon: './icon.svg' });
+            }, delayMs);
+        }
+
+        function cancelNotification() {
+            if (notificationTimer) {
+                clearTimeout(notificationTimer);
+                notificationTimer = null;
+            }
+        }
+
         // Initialize
         async function init() {
             if (CLIENT_ID === 'YOUR_CLIENT_ID') {
@@ -819,6 +837,9 @@
             loginSection.classList.remove('show');
             appSection.classList.add('show');
             loadCommSlotsConfig();
+            if ('Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
         }
         
         // Spotify Authentication with PKCE
@@ -1544,6 +1565,7 @@
             sessionTimer = setTimeout(async () => {
                 await endFocusSession();
             }, focusDuration);
+            scheduleNotification('Focus Session Complete', 'Time for a break — great work!', focusDuration);
 
             if (!commCheckInterval) {
                 commCheckInterval = setInterval(checkCommSlots, 60000);
@@ -1552,6 +1574,7 @@
         
         // End break session and start next focus session
         async function endBreakSession() {
+            cancelNotification();
             if (transitionPlaybackTimeout) {
                 clearTimeout(transitionPlaybackTimeout);
                 transitionPlaybackTimeout = null;
@@ -1576,6 +1599,7 @@
 
         // End focus session and start break
         async function endFocusSession() {
+            cancelNotification();
             stopProgressAnimation();
 
             playNotificationSound();
@@ -1614,6 +1638,7 @@
             sessionTimer = setTimeout(async () => {
                 await endBreakSession();
             }, breakDuration);
+            scheduleNotification('Break Over', 'Ready to focus again?', breakDuration);
         }
         
         // Stop session
@@ -1640,6 +1665,7 @@
 
             currentCommSlot = null;
             currentPhase = null;
+            cancelNotification();
             stopProgressAnimation();
 
             // Actually pause the music
@@ -1798,6 +1824,7 @@
                     clearTimeout(sessionTimer);
                     sessionTimer = null;
                 }
+                cancelNotification();
 
                 if (currentPhase === 'focus') {
                     await endFocusSession();
@@ -1821,10 +1848,12 @@
                     sessionTimer = setTimeout(async () => {
                         await endFocusSession();
                     }, remaining);
+                    scheduleNotification('Focus Session Complete', 'Time for a break — great work!', remaining);
                 } else if (currentPhase === 'break') {
                     sessionTimer = setTimeout(async () => {
                         await endBreakSession();
                     }, remaining);
+                    scheduleNotification('Break Over', 'Ready to focus again?', remaining);
                 } else if (currentPhase === 'comm') {
                     // Re-arm comm warning if it hasn't fired yet
                     if (!commWarningShown) {
