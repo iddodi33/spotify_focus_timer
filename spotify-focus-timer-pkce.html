@@ -724,6 +724,7 @@
         let inCallMode = false;
         let transitionPlaybackTimeout = null;
         let transitionNextSessionTimeout = null;
+        let currentPhase = null; // 'focus' | 'break' | 'comm' | null
         
         // DOM Elements
         const loginSection = document.getElementById('login-section');
@@ -1436,6 +1437,7 @@
 
             currentCommSlot = slot;
             commWarningShown = false;
+            currentPhase = 'comm';
 
             updateStatus('COMMUNICATION', 'Communication Slot', 'Time for emails and messages', 'break');
             speak('Communication slot started');
@@ -1520,6 +1522,7 @@
             const focusMinutes = parseInt(focusDurationInput.value);
             const focusDuration = focusMinutes * 60 * 1000;
 
+            currentPhase = 'focus';
             updateStatus('FOCUS MODE', 'Deep Work Session', `${focusMinutes} minutes of focused work`, 'focus');
             startProgressAnimation(focusDuration);
 
@@ -1547,19 +1550,43 @@
             }
         }
         
+        // End break session and start next focus session
+        async function endBreakSession() {
+            if (transitionPlaybackTimeout) {
+                clearTimeout(transitionPlaybackTimeout);
+                transitionPlaybackTimeout = null;
+            }
+
+            const slotDuringBreak = getActiveCommSlot();
+            if (slotDuringBreak) {
+                await startCommSlot(slotDuringBreak);
+                return;
+            }
+
+            stopProgressAnimation();
+            await pausePlayback();
+            playNotificationSound();
+            setTimeout(() => { speak('Break is over, back to focus'); }, 500);
+
+            transitionNextSessionTimeout = setTimeout(() => {
+                transitionNextSessionTimeout = null;
+                startFocusSession();
+            }, 3000);
+        }
+
         // End focus session and start break
         async function endFocusSession() {
             stopProgressAnimation();
-            
+
             playNotificationSound();
             setTimeout(() => {
                 speak('Work session is done, time to take a break');
             }, 500);
-            
+
             sessionCount++;
             updateSessionCount();
             localStorage.setItem('session_count_' + new Date().toDateString(), sessionCount);
-            
+
             // Check if we should start a comm slot instead of a break
             const activeSlot = getActiveCommSlot();
             if (activeSlot) {
@@ -1568,37 +1595,24 @@
                 }, 2000);
                 return;
             }
-            
+
             // Get custom break duration
             const breakMinutes = parseInt(breakDurationInput.value);
             const breakDuration = breakMinutes * 60 * 1000;
-            
+
+            currentPhase = 'break';
             updateStatus('BREAK TIME', 'Taking a Break', `${breakMinutes} minutes to recharge`, 'break');
-            
+
             // Start break progress animation
             startProgressAnimation(breakDuration);
-            
+
             transitionPlaybackTimeout = setTimeout(async () => {
                 transitionPlaybackTimeout = null;
                 await startPlayback(breakPlaylistId, 'break');
             }, 3000);
 
             sessionTimer = setTimeout(async () => {
-                const slotDuringBreak = getActiveCommSlot();
-                if (slotDuringBreak) {
-                    await startCommSlot(slotDuringBreak);
-                    return;
-                }
-
-                stopProgressAnimation();
-                await pausePlayback();
-                playNotificationSound();
-                setTimeout(() => { speak('Break is over, back to focus'); }, 500);
-
-                transitionNextSessionTimeout = setTimeout(() => {
-                    transitionNextSessionTimeout = null;
-                    startFocusSession();
-                }, 3000);
+                await endBreakSession();
             }, breakDuration);
         }
         
@@ -1625,8 +1639,9 @@
             }
 
             currentCommSlot = null;
+            currentPhase = null;
             stopProgressAnimation();
-            
+
             // Actually pause the music
             await pausePlayback();
             
@@ -1758,15 +1773,76 @@
                 .catch(() => {});
         }
         
-        // Handle page visibility changes (laptop wake from sleep)
+        // Handle page visibility changes (mobile screen-off / laptop wake)
         document.addEventListener('visibilitychange', async () => {
-            if (!document.hidden && isInSession) {
-                // Page became visible again, check token
+            if (document.hidden || !isInSession || !currentPhase) return;
+
+            // Refresh Spotify token if needed
+            if (accessToken) {
                 const tokenValid = await ensureValidToken();
                 if (!tokenValid) {
-                    // Token couldn't be refreshed, stop session
                     await stopSession();
                     showError('Session expired. Please reconnect to Spotify and start again.');
+                    return;
+                }
+            }
+
+            // Time-based catch-up: recalculate how much time has actually passed
+            const now = Date.now();
+            const elapsed = now - sessionStartTime;
+            const remaining = sessionDuration - elapsed;
+
+            if (remaining <= 0) {
+                // Session ended while screen was off — fire the end handler immediately
+                if (sessionTimer) {
+                    clearTimeout(sessionTimer);
+                    sessionTimer = null;
+                }
+
+                if (currentPhase === 'focus') {
+                    await endFocusSession();
+                } else if (currentPhase === 'break') {
+                    await endBreakSession();
+                } else if (currentPhase === 'comm') {
+                    await endCommSlot();
+                }
+            } else {
+                // Session still running — snap progress bar and reschedule timer
+                if (sessionTimer) {
+                    clearTimeout(sessionTimer);
+                }
+                if (progressInterval) {
+                    clearInterval(progressInterval);
+                }
+                progressInterval = setInterval(updateProgress, 1000);
+                updateProgress();
+
+                if (currentPhase === 'focus') {
+                    sessionTimer = setTimeout(async () => {
+                        await endFocusSession();
+                    }, remaining);
+                } else if (currentPhase === 'break') {
+                    sessionTimer = setTimeout(async () => {
+                        await endBreakSession();
+                    }, remaining);
+                } else if (currentPhase === 'comm') {
+                    // Re-arm comm warning if it hasn't fired yet
+                    if (!commWarningShown) {
+                        if (remaining <= COMM_WARNING_TIME) {
+                            speak('Communication slot ends in 3 minutes');
+                            commWarningShown = true;
+                        } else {
+                            setTimeout(() => {
+                                if (currentCommSlot && !commWarningShown) {
+                                    speak('Communication slot ends in 3 minutes');
+                                    commWarningShown = true;
+                                }
+                            }, remaining - COMM_WARNING_TIME);
+                        }
+                    }
+                    sessionTimer = setTimeout(async () => {
+                        await endCommSlot();
+                    }, remaining);
                 }
             }
         });
