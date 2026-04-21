@@ -726,6 +726,7 @@
         let transitionNextSessionTimeout = null;
         let currentPhase = null; // 'focus' | 'break' | 'comm' | null
         let notificationTimer = null;
+        let persistInterval = null;
         
         // DOM Elements
         const loginSection = document.getElementById('login-section');
@@ -791,6 +792,164 @@
             }
         }
 
+        // --- Session persistence ---
+
+        const SESSION_PERSIST_KEY = 'active_session_state';
+
+        function saveSessionState() {
+            if (!isInSession || !currentPhase || currentPhase === 'comm') return;
+            try {
+                localStorage.setItem(SESSION_PERSIST_KEY, JSON.stringify({
+                    session_type: currentPhase,
+                    session_start_timestamp: sessionStartTime,
+                    focus_duration_ms: parseInt(focusDurationInput.value) * 60000,
+                    break_duration_ms: parseInt(breakDurationInput.value) * 60000,
+                    sessions_completed_today: sessionCount,
+                    music_service: isPremium ? 'spotify' : 'youtube',
+                    playlist_focus_id: focusPlaylistId,
+                    playlist_break_id: breakPlaylistId,
+                }));
+            } catch (e) {}
+        }
+
+        function clearSessionState() {
+            localStorage.removeItem(SESSION_PERSIST_KEY);
+        }
+
+        function startPersistInterval() {
+            if (persistInterval) return;
+            persistInterval = setInterval(saveSessionState, 5000);
+        }
+
+        function stopPersistInterval() {
+            if (persistInterval) {
+                clearInterval(persistInterval);
+                persistInterval = null;
+            }
+        }
+
+        function showRestoredBanner(message) {
+            const existing = document.getElementById('restore-banner');
+            if (existing) existing.remove();
+            const banner = document.createElement('div');
+            banner.id = 'restore-banner';
+            banner.style.cssText = 'background:rgba(29,185,84,0.12);border:1px solid rgba(29,185,84,0.35);color:#1db954;padding:1rem;border-radius:12px;margin-bottom:1rem;font-size:0.88rem;';
+            banner.textContent = '\u21a9 ' + message;
+            errorMsg.parentNode.insertBefore(banner, errorMsg);
+            setTimeout(() => banner.remove(), 10000);
+        }
+
+        async function recoverSession(state) {
+            const now = Date.now();
+            // Discard state older than 12 hours — not from a recent call
+            if (now - state.session_start_timestamp > 12 * 3600 * 1000) {
+                clearSessionState();
+                return false;
+            }
+
+            // Restore music service
+            if (state.music_service === 'spotify' && localStorage.getItem('spotify_token')) {
+                accessToken = localStorage.getItem('spotify_token');
+                isPremium = true;
+                focusPlaylistId = state.playlist_focus_id || null;
+                breakPlaylistId = state.playlist_break_id || null;
+                showApp();
+                try { await ensureValidToken(); } catch (e) {}
+            } else if (state.music_service === 'youtube' || localStorage.getItem('yt_free_accepted') === 'true') {
+                showApp();
+                activateYouTubeMode();
+            } else {
+                clearSessionState();
+                return false;
+            }
+
+            // Restore duration inputs
+            if (state.focus_duration_ms) focusDurationInput.value = Math.round(state.focus_duration_ms / 60000);
+            if (state.break_duration_ms) breakDurationInput.value = Math.round(state.break_duration_ms / 60000);
+
+            const elapsed = now - state.session_start_timestamp;
+            const phaseDuration = state.session_type === 'focus' ? state.focus_duration_ms : state.break_duration_ms;
+            const remaining = phaseDuration - elapsed;
+
+            if (state.session_type === 'focus' && remaining <= 0) {
+                // Focus ended while app was closed — check if break also ended
+                const breakRemaining = state.break_duration_ms - (elapsed - state.focus_duration_ms);
+
+                sessionCount = (state.sessions_completed_today || 0) + 1;
+                localStorage.setItem('session_count_' + new Date().toDateString(), sessionCount);
+                updateSessionCount();
+                clearSessionState();
+
+                if (breakRemaining <= 0) {
+                    showRestoredBanner('Your focus session ended while you were away');
+                    updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
+                } else {
+                    showRestoredBanner('Session restored \u2014 you were on a call');
+                    isInSession = true;
+                    startBtn.style.display = 'none';
+                    stopBtn.style.display = 'block';
+                    focusDurationInput.disabled = true;
+                    breakDurationInput.disabled = true;
+
+                    const breakMins = Math.round(state.break_duration_ms / 60000);
+                    currentPhase = 'break';
+                    updateStatus('BREAK TIME', 'Taking a Break', `${breakMins} minutes to recharge`, 'break');
+
+                    sessionStartTime = state.session_start_timestamp + state.focus_duration_ms;
+                    sessionDuration = state.break_duration_ms;
+                    if (progressInterval) clearInterval(progressInterval);
+                    progressInterval = setInterval(updateProgress, 1000);
+                    updateProgress();
+
+                    sessionTimer = setTimeout(async () => { await endBreakSession(); }, breakRemaining);
+                    scheduleNotification('Break Over', 'Ready to focus again?', breakRemaining);
+                    saveSessionState();
+                    startPersistInterval();
+                    if (!commCheckInterval) commCheckInterval = setInterval(checkCommSlots, 60000);
+                }
+            } else if (remaining <= 0) {
+                // Break ended while closed → idle
+                showRestoredBanner('Your session ended while you were away');
+                updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
+                clearSessionState();
+            } else {
+                // Session still running — restore at correct remaining time
+                showRestoredBanner('Session restored \u2014 you were on a call');
+                isInSession = true;
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'block';
+                focusDurationInput.disabled = true;
+                breakDurationInput.disabled = true;
+
+                sessionStartTime = state.session_start_timestamp;
+                sessionDuration = phaseDuration;
+                if (progressInterval) clearInterval(progressInterval);
+                progressInterval = setInterval(updateProgress, 1000);
+                updateProgress();
+
+                if (state.session_type === 'focus') {
+                    const focusMins = Math.round(state.focus_duration_ms / 60000);
+                    currentPhase = 'focus';
+                    updateStatus('FOCUS MODE', 'Deep Work Session', `${focusMins} minutes of focused work`, 'focus');
+                    sessionTimer = setTimeout(async () => { await endFocusSession(); }, remaining);
+                    scheduleNotification('Focus Session Complete', 'Time for a break \u2014 great work!', remaining);
+                } else {
+                    const breakMins = Math.round(state.break_duration_ms / 60000);
+                    currentPhase = 'break';
+                    updateStatus('BREAK TIME', 'Taking a Break', `${breakMins} minutes to recharge`, 'break');
+                    sessionTimer = setTimeout(async () => { await endBreakSession(); }, remaining);
+                    scheduleNotification('Break Over', 'Ready to focus again?', remaining);
+                }
+
+                sessionCount = state.sessions_completed_today || 0;
+                updateSessionCount();
+                startPersistInterval();
+                if (!commCheckInterval) commCheckInterval = setInterval(checkCommSlots, 60000);
+            }
+
+            return true;
+        }
+
         // Initialize
         async function init() {
             if (CLIENT_ID === 'YOUR_CLIENT_ID') {
@@ -812,24 +971,41 @@
                 // Exchange code for access token, then proceed to app
                 await exchangeCodeForToken(code);
                 window.history.replaceState({}, document.title, window.location.pathname);
-            } else if (localStorage.getItem('spotify_token')) {
-                // Spotify was previously connected — proceed directly to app
-                accessToken = localStorage.getItem('spotify_token');
-                showApp();
-                await initializeApp();
-            } else if (localStorage.getItem('yt_free_accepted') === 'true') {
-                // YouTube was previously chosen — proceed directly to YouTube mode
-                showApp();
-                activateYouTubeMode();
             } else {
-                // No service chosen yet — show the service selector
-                loginSection.classList.add('show');
+                // Check for a persisted session before the normal service flow
+                const savedStateRaw = localStorage.getItem(SESSION_PERSIST_KEY);
+                let recovered = false;
+                if (savedStateRaw) {
+                    try {
+                        const state = JSON.parse(savedStateRaw);
+                        if (state.session_start_timestamp && state.session_type) {
+                            recovered = await recoverSession(state);
+                        }
+                    } catch (e) {
+                        clearSessionState();
+                    }
+                }
+
+                if (!recovered) {
+                    if (localStorage.getItem('spotify_token')) {
+                        accessToken = localStorage.getItem('spotify_token');
+                        showApp();
+                        await initializeApp();
+                    } else if (localStorage.getItem('yt_free_accepted') === 'true') {
+                        showApp();
+                        activateYouTubeMode();
+                    } else {
+                        loginSection.classList.add('show');
+                    }
+                }
             }
 
-            // Load session count
-            const savedCount = localStorage.getItem('session_count_' + new Date().toDateString());
-            sessionCount = savedCount ? parseInt(savedCount) : 0;
-            updateSessionCount();
+            // Load session count only when not recovered (recovery sets it directly)
+            if (!isInSession) {
+                const savedCount = localStorage.getItem('session_count_' + new Date().toDateString());
+                sessionCount = savedCount ? parseInt(savedCount) : 0;
+                updateSessionCount();
+            }
         }
         
         // Show app section
@@ -1566,6 +1742,8 @@
                 await endFocusSession();
             }, focusDuration);
             scheduleNotification('Focus Session Complete', 'Time for a break — great work!', focusDuration);
+            saveSessionState();
+            startPersistInterval();
 
             if (!commCheckInterval) {
                 commCheckInterval = setInterval(checkCommSlots, 60000);
@@ -1629,6 +1807,7 @@
 
             // Start break progress animation
             startProgressAnimation(breakDuration);
+            saveSessionState();
 
             transitionPlaybackTimeout = setTimeout(async () => {
                 transitionPlaybackTimeout = null;
@@ -1666,6 +1845,8 @@
             currentCommSlot = null;
             currentPhase = null;
             cancelNotification();
+            clearSessionState();
+            stopPersistInterval();
             stopProgressAnimation();
 
             // Actually pause the music
