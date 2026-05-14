@@ -75,6 +75,23 @@ times and is the most common bug in this project:
 - undefined (API error, bad token) → default to isPremium = true
   NEVER show free modal on undefined — always default to Premium
 
+### Device Resolution — resolveActiveDevice()
+- Spotify PUT /v1/me/player/play returns 404 NO_ACTIVE_DEVICE if no device
+  is currently "active", even when the desktop app is open
+- resolveActiveDevice(showModal = true) is called at the top of
+  startPlayback() before every play attempt
+- Flow: ensureValidToken() → GET /v1/me/player/devices →
+  if empty, show #no-device-modal and return null →
+  if active device exists, return its id →
+  otherwise pick Computer > Smartphone > first available,
+  transfer via PUT /v1/me/player with play: false, wait 500ms, return id
+- Always append ?device_id=X to the play URL — never call play without it
+- Break transitions in endFocusSession pass silentOnNoDevice = true
+  so a missing device mid-session does not pop the modal or block the timer
+- noDeviceRetryFn is set to startFocusSession() or startCommSlot(slot)
+  before each play attempt so the "Try Again" button re-enters the
+  full flow cleanly
+
 ### localStorage Keys
 - spotify_token — Spotify access token
 - refresh_token — Spotify refresh token
@@ -133,6 +150,10 @@ times and is the most common bug in this project:
   Fallback: random 50/50 split of liked songs
 
 ## Known Issues / Watch Out For
+- NEVER call PUT /v1/me/player/play without first calling
+  resolveActiveDevice() and appending ?device_id=X. Spotify returns
+  404 NO_ACTIVE_DEVICE if you skip this, even when the desktop app
+  is open. This has broken once already.
 - CSS !important is REQUIRED on all section show/hide rules — check this 
   first whenever a section is not visible
 - startPlayback() must return true before starting any timer
