@@ -425,17 +425,19 @@
             font-size: 0.9rem;
         }
 
-        #free-modal {
+        #free-modal,
+        #no-device-modal {
             position: fixed;
             inset: 0;
             z-index: 100;
-            display: none;
+            display: none !important;
             align-items: center;
             justify-content: center;
             padding: 2rem;
         }
 
-        #free-modal.show {
+        #free-modal.show,
+        #no-device-modal.show {
             display: flex !important;
         }
 
@@ -694,6 +696,16 @@
         </div>
     </div>
 
+    <div id="no-device-modal">
+        <div class="free-modal-backdrop"></div>
+        <div class="free-modal-box">
+            <div class="free-modal-title">No Spotify Device Found</div>
+            <p class="free-modal-msg">Open Spotify on your desktop, phone, or web player at open.spotify.com and play any song once to activate it. Then come back here and try again.</p>
+            <a href="https://open.spotify.com" target="_blank" class="btn btn-primary">Open Spotify Web Player</a>
+            <button id="no-device-try-again-btn" class="btn btn-secondary">Try Again</button>
+        </div>
+    </div>
+
     <script>
         // Spotify API Configuration - REPLACE WITH YOUR CLIENT ID
         const CLIENT_ID = '8e34dc8a40374855a3c8e3064e271405';
@@ -727,6 +739,7 @@
         let currentPhase = null; // 'focus' | 'break' | 'comm' | null
         let notificationTimer = null;
         let persistInterval = null;
+        let noDeviceRetryFn = null;
         
         // DOM Elements
         const loginSection = document.getElementById('login-section');
@@ -748,6 +761,7 @@
         const onboardingText = document.getElementById('onboarding-text');
         const youtubeSection = document.getElementById('youtube-section');
         const freeModal = document.getElementById('free-modal');
+        const noDeviceModal = document.getElementById('no-device-modal');
         const focusYtInput = document.getElementById('yt-focus-url');
         const breakYtInput = document.getElementById('yt-break-url');
         const commSlotsEnabledCheckbox = document.getElementById('comm-slots-enabled');
@@ -1404,33 +1418,77 @@
             return items;
         }
         
-        // Start playback. type = 'focus' | 'break'. Returns true on success, false on failure.
-        async function startPlayback(playlistId, type = 'focus') {
+        // Resolve an active Spotify device. Returns deviceId string or null.
+        // showModal=false suppresses the no-device modal (soft failure path).
+        async function resolveActiveDevice(showModal = true) {
+            await ensureValidToken();
+            try {
+                const res = await fetch('https://api.spotify.com/v1/me/player/devices', {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                if (!res.ok) return null;
+                const data = await res.json();
+                const devices = data.devices || [];
+                console.log('[Device] Available devices:', devices);
+
+                if (devices.length === 0) {
+                    console.log('[Device] No devices found');
+                    if (showModal) noDeviceModal.classList.add('show');
+                    return null;
+                }
+
+                const active = devices.find(d => d.is_active);
+                if (active) {
+                    console.log('[Device] Active device found:', active);
+                    return active.id;
+                }
+
+                const selected = devices.find(d => d.type === 'Computer')
+                    || devices.find(d => d.type === 'Smartphone')
+                    || devices[0];
+                console.log('[Device] Transferring playback to:', selected);
+
+                await fetch('https://api.spotify.com/v1/me/player', {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_ids: [selected.id], play: false })
+                });
+                await new Promise(r => setTimeout(r, 500));
+                return selected.id;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // Start playback. type = 'focus' | 'break'. silentOnNoDevice skips the modal.
+        // Returns true on success, false on failure.
+        async function startPlayback(playlistId, type = 'focus', silentOnNoDevice = false) {
             if (!isPremium) {
                 ytPlayUrl(type === 'focus' ? focusYtInput.value : breakYtInput.value);
                 return true;
             }
             await ensureValidToken();
 
+            const deviceId = await resolveActiveDevice(!silentOnNoDevice);
+            if (deviceId === null) return false;
+
             const body = JSON.stringify({ context_uri: `spotify:playlist:${playlistId}`, position_ms: 0 });
             const headers = { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
+            const playUrl = `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`;
 
             try {
-                let response = await fetch('https://api.spotify.com/v1/me/player/play', {
-                    method: 'PUT', headers, body
-                });
+                let response = await fetch(playUrl, { method: 'PUT', headers, body });
 
                 if (response.status === 401) {
                     const refreshed = await refreshAccessToken();
                     if (!refreshed) return false;
-                    response = await fetch('https://api.spotify.com/v1/me/player/play', {
+                    response = await fetch(playUrl, {
                         method: 'PUT',
                         headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
                         body
                     });
                 }
 
-                if (response.status === 404) return false;
                 if (!response.ok) {
                     showError('Failed to start playback. Error: ' + response.status);
                     return false;
@@ -1639,16 +1697,17 @@
             updateStatus('COMMUNICATION', 'Communication Slot', 'Time for emails and messages', 'break');
             speak('Communication slot started');
 
+            noDeviceRetryFn = () => startCommSlot(slot);
             const playbackOk = await startPlayback(breakPlaylistId, 'break');
             if (!playbackOk) {
                 currentCommSlot = null;
+                currentPhase = null;
                 isInSession = false;
                 startBtn.style.display = 'block';
                 stopBtn.style.display = 'none';
                 focusDurationInput.disabled = false;
                 breakDurationInput.disabled = false;
                 updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
-                showError('No active Spotify device found. Open Spotify and play any song on any device or in another tab, then click Start again.');
                 return;
             }
             hideError();
@@ -1723,17 +1782,18 @@
             updateStatus('FOCUS MODE', 'Deep Work Session', `${focusMinutes} minutes of focused work`, 'focus');
             startProgressAnimation(focusDuration);
 
+            noDeviceRetryFn = () => startFocusSession();
             const playbackOk = await startPlayback(focusPlaylistId, 'focus');
             if (!playbackOk) {
-                // Abort — no active Spotify device
+                // Abort — no active Spotify device (modal shown by resolveActiveDevice)
                 stopProgressAnimation();
+                currentPhase = null;
                 isInSession = false;
                 startBtn.style.display = 'block';
                 stopBtn.style.display = 'none';
                 focusDurationInput.disabled = false;
                 breakDurationInput.disabled = false;
                 updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
-                showError('No active Spotify device found. Open Spotify and play any song on any device or in another tab, then click Start again.');
                 return;
             }
             hideError();
@@ -1811,7 +1871,7 @@
 
             transitionPlaybackTimeout = setTimeout(async () => {
                 transitionPlaybackTimeout = null;
-                await startPlayback(breakPlaylistId, 'break');
+                await startPlayback(breakPlaylistId, 'break', true);
             }, 3000);
 
             sessionTimer = setTimeout(async () => {
@@ -1920,6 +1980,16 @@
 
         focusYtInput.addEventListener('change', saveYtUrls);
         breakYtInput.addEventListener('change', saveYtUrls);
+
+        document.getElementById('no-device-try-again-btn').addEventListener('click', async () => {
+            noDeviceModal.classList.remove('show');
+            const deviceId = await resolveActiveDevice();
+            if (deviceId !== null && noDeviceRetryFn) {
+                const fn = noDeviceRetryFn;
+                noDeviceRetryFn = null;
+                fn();
+            }
+        });
 
         document.getElementById('free-back-btn').addEventListener('click', () => {
             freeModal.classList.remove('show');
