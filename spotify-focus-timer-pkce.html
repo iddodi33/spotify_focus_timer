@@ -340,6 +340,100 @@
         #service-selector.show { display: block !important; }
         #app-section.show { display: block !important; }
 
+        /* Plan mode (payload from Cockpit). Same !important rule as every
+           other section — this is the bug that keeps coming back. */
+        #plan-section { display: none !important; }
+        #plan-section.show { display: block !important; }
+        #plan-note { display: none !important; }
+        #plan-note.show { display: block !important; }
+
+        #plan-section {
+            background: rgba(29, 185, 84, 0.07);
+            border: 1px solid rgba(29, 185, 84, 0.3);
+            border-radius: 16px;
+            padding: 1.1rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .plan-head {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.85rem;
+        }
+
+        .plan-badge {
+            font-family: 'Space Mono', monospace;
+            font-size: 0.7rem;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        .plan-date {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+        }
+
+        .btn-leave-plan {
+            margin-left: auto;
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            color: var(--text-dim);
+            font-family: 'Space Mono', monospace;
+            font-size: 0.65rem;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            padding: 0.4rem 0.7rem;
+            border-radius: 12px;
+            cursor: pointer;
+        }
+
+        .btn-leave-plan:hover {
+            color: var(--text);
+            border-color: rgba(255, 255, 255, 0.35);
+        }
+
+        .plan-now-title {
+            font-size: 0.98rem;
+            color: var(--text);
+            font-weight: 500;
+            line-height: 1.4;
+        }
+
+        .plan-now-meta,
+        .plan-cycle,
+        .plan-next {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.78rem;
+            color: var(--text-dim);
+            margin-top: 0.35rem;
+        }
+
+        .plan-cycle strong { color: var(--accent); font-weight: 500; }
+
+        .plan-hint {
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            margin-top: 0.75rem;
+            padding-top: 0.6rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        #plan-note {
+            background: rgba(245, 158, 11, 0.12);
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            color: var(--break-color);
+            padding: 0.85rem 1rem;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+            font-size: 0.82rem;
+            line-height: 1.45;
+        }
+
         .comm-slots-toggle label {
             display: flex;
             align-items: center;
@@ -602,6 +696,27 @@
                 <div id="premium-warning" class="warning" style="display: none;"></div>
                 <div id="error-msg" class="error" style="display: none;"></div>
 
+                <!-- Why a plan that arrived was ignored. Shown in NORMAL mode:
+                     a plan is never half-applied, so if anything is wrong with
+                     it the timer says so and runs as usual. -->
+                <div id="plan-note"></div>
+
+                <div id="plan-section">
+                    <div class="plan-head">
+                        <span class="plan-badge">Plan mode</span>
+                        <span id="plan-date" class="plan-date"></span>
+                        <button type="button" id="leave-plan-btn" class="btn-leave-plan">Leave plan mode</button>
+                    </div>
+                    <div id="plan-now-title" class="plan-now-title"></div>
+                    <div id="plan-now-meta" class="plan-now-meta"></div>
+                    <div id="plan-cycle" class="plan-cycle"></div>
+                    <div id="plan-next" class="plan-next"></div>
+                    <div class="plan-hint">
+                        Cycle lengths come from the plan, so the focus and break
+                        durations above are ignored while this is on.
+                    </div>
+                </div>
+
                 <div id="youtube-section" style="display: none;">
                     <div class="settings">
                         <div class="yt-section-title">🎬 YouTube Mode</div>
@@ -740,6 +855,13 @@
         let notificationTimer = null;
         let persistInterval = null;
         let noDeviceRetryFn = null;
+
+        // --- Plan mode state (a plan pushed in from Cockpit) ---
+        let planMode = false;
+        let planData = null;        // the validated payload
+        let planTimeout = null;     // the ONE timer plan mode uses; cleared in stopSession
+        let planCurrentKey = null;  // which segment is running, so a re-sync is not a restart
+        let planNote = '';          // why an arriving plan was ignored, if it was
         
         // DOM Elements
         const loginSection = document.getElementById('login-section');
@@ -768,6 +890,14 @@
         const commSlotsConfig = document.getElementById('comm-slots-config');
         const commSlotsList = document.getElementById('comm-slots-list');
         const addSlotBtn = document.getElementById('add-slot-btn');
+        const planSection = document.getElementById('plan-section');
+        const planNoteEl = document.getElementById('plan-note');
+        const planDateEl = document.getElementById('plan-date');
+        const planNowTitleEl = document.getElementById('plan-now-title');
+        const planNowMetaEl = document.getElementById('plan-now-meta');
+        const planCycleEl = document.getElementById('plan-cycle');
+        const planNextEl = document.getElementById('plan-next');
+        const leavePlanBtn = document.getElementById('leave-plan-btn');
         
         // PKCE Helper Functions
         function generateRandomString(length) {
@@ -806,11 +936,553 @@
             }
         }
 
+        // =====================================================================
+        // PLAN MODE — a day pushed in from Cockpit as #plan=<base64url JSON>
+        //
+        // ONE WAY ONLY. Cockpit builds the payload, this page runs it. There is
+        // no call back the other way: this is a static page with no backend,
+        // and Cockpit's database is locked to two owner emails, so it could not
+        // read or write it even if it tried. Nothing here should ever try.
+        //
+        // The cycle split is Cockpit's job and is unit tested there. Do NOT
+        // recompute work/break lengths here — just run what arrives.
+        // =====================================================================
+
+        const PLAN_PAYLOAD_KEY = 'plan_payload';
+        const PLAN_COMM_SLOTS_KEY = 'plan_comm_slots';
+
+        // === PLAN-PURE-START =================================================
+        // Everything between these markers is pure: no DOM, no network, no
+        // clock of its own (every function takes the instant it needs). They
+        // are evaluated directly by the test harness, so keep them that way.
+
+        /** Today, as YYYY-MM-DD in LOCAL time — never toISOString(), which is UTC. */
+        function todayLocalISODate(ts) {
+            const d = new Date(ts === undefined ? Date.now() : ts);
+            const pad = (n) => String(n).padStart(2, '0');
+            return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+        }
+
+        /** Local "HH:MM" for an instant. */
+        function hhmm(ms) {
+            const d = new Date(ms);
+            return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+        }
+
+        /**
+         * base64URL -> object. NOT plain atob: Cockpit encodes base64URL over
+         * UTF-8 bytes, so the padding and the two swapped characters have to be
+         * put back, and the bytes have to go through TextDecoder. Block titles
+         * are real sentences with em dashes and fadas in them — decoding them
+         * as Latin-1 corrupts them, and skipping the swap makes atob throw.
+         */
+        function decodePlanPayload(raw) {
+            let b64 = String(raw).replace(/-/g, '+').replace(/_/g, '/');
+            while (b64.length % 4 !== 0) b64 += '=';
+            const binary = atob(b64);
+            const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+            return JSON.parse(new TextDecoder().decode(bytes));
+        }
+
+        /**
+         * Is this payload safe to run? Returns { ok } or { ok: false, why }.
+         *
+         * ALL OR NOTHING. A payload that is the wrong version, is for another
+         * day, or has nothing runnable in it is refused with a reason and the
+         * timer stays normal. A half-applied plan — some blocks, wrong day, a
+         * shape we half-understood — is worse than no plan.
+         */
+        function validatePlanPayload(plan, nowMs) {
+            if (!plan || typeof plan !== 'object') return { ok: false, why: 'it could not be read' };
+            if (plan.v !== 1) return { ok: false, why: 'it was built for a different version of this timer (v' + plan.v + ')' };
+            if (!Array.isArray(plan.blocks)) return { ok: false, why: 'it contained no blocks' };
+            const today = todayLocalISODate(nowMs);
+            if (plan.date !== today) return { ok: false, why: 'it is for ' + plan.date + ', not today' };
+            const usable = plan.blocks.filter((b) => b && Number.isFinite(Date.parse(b.start)) && Date.parse(b.end) > Date.parse(b.start));
+            if (usable.length !== plan.blocks.length) return { ok: false, why: 'one of its blocks had no usable start and end' };
+            return { ok: true };
+        }
+
+        /**
+         * A block split into the segments actually run: work, break, work,
+         * break… from its cycles, or ONE quiet segment when it has none.
+         *
+         * An empty cycles array is not an error — a domestic block arrives that
+         * way on purpose. It shows its title and its time range, plays nothing,
+         * and hands over to the next block when it ends.
+         */
+        function planBlockSegments(block) {
+            const startMs = Date.parse(block.start);
+            const endMs = Date.parse(block.end);
+            const cycles = Array.isArray(block.cycles) ? block.cycles : [];
+            const quiet = [{ phase: 'quiet', start: startMs, end: endMs, cycleIndex: 0, cycleCount: 0 }];
+            if (!cycles.length) return quiet;
+
+            const segs = [];
+            let cursor = startMs;
+            for (let i = 0; i < cycles.length; i++) {
+                const pair = cycles[i] || [];
+                const work = Math.max(0, Math.round(Number(pair[0]) || 0));
+                const rest = Math.max(0, Math.round(Number(pair[1]) || 0));
+                if (work > 0) {
+                    segs.push({ phase: 'focus', start: cursor, end: cursor + work * 60000, cycleIndex: i, cycleCount: cycles.length });
+                    cursor += work * 60000;
+                }
+                if (rest > 0) {
+                    segs.push({ phase: 'break', start: cursor, end: cursor + rest * 60000, cycleIndex: i, cycleCount: cycles.length });
+                    cursor += rest * 60000;
+                }
+            }
+
+            // Cockpit guarantees the cycles sum to the block length. If a
+            // payload ever disagrees, the BLOCK'S OWN END WINS — otherwise one
+            // bad block would push every later block out of step for the day.
+            const trimmed = segs.filter((s) => s.start < endMs);
+            if (!trimmed.length) return quiet;
+            trimmed[trimmed.length - 1].end = endMs;
+            return trimmed;
+        }
+
+        /** The plan's comms windows as instants on the day of `ts`. */
+        function planCommWindowsFor(ts, slots) {
+            const d = new Date(ts);
+            return (slots || []).map((s) => {
+                const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), s.hour, s.minute, 0, 0).getTime();
+                return { start: start, end: start + (s.duration || 30) * 60000 };
+            }).sort((a, b) => a.start - b.start);
+        }
+
+        /**
+         * What should be happening at `ts`.
+         *
+         * Everything is resolved from ABSOLUTE timestamps, never from a chain
+         * of elapsed timers — which is what lets the Page Visibility handler
+         * ask this same question after the phone screen has been off for an
+         * hour and get the right answer.
+         */
+        function planStateAt(ts, plan, commSlots) {
+            const blocks = (plan && plan.blocks) || [];
+            for (let i = 0; i < blocks.length; i++) {
+                const b = blocks[i];
+                const s = Date.parse(b.start);
+                const e = Date.parse(b.end);
+                if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue;
+                if (ts >= s && ts < e) {
+                    const segs = planBlockSegments(b);
+                    const seg = segs.find((x) => ts >= x.start && ts < x.end) || segs[segs.length - 1];
+                    return {
+                        kind: seg.phase,
+                        block: b,
+                        blockIndex: i,
+                        cycleIndex: seg.cycleIndex,
+                        cycleCount: seg.cycleCount,
+                        start: seg.start,
+                        end: seg.end,
+                        nextBlock: blocks[i + 1] || null
+                    };
+                }
+            }
+
+            const next = blocks.find((b) => Date.parse(b.start) > ts) || null;
+            const windows = planCommWindowsFor(ts, commSlots);
+            const nextBlockStart = next ? Date.parse(next.start) : Infinity;
+
+            const openComm = windows.find((w) => ts >= w.start && ts < w.end);
+            if (openComm) {
+                // A block always outranks a comms window if they ever overlap:
+                // the block is the committed thing. Cockpit carves comms out of
+                // the gaps, so in practice they never do.
+                const end = Math.min(openComm.end, nextBlockStart);
+                if (end > ts) {
+                    return { kind: 'comm', block: null, blockIndex: -1, cycleIndex: 0, cycleCount: 0, start: openComm.start, end: end, nextBlock: next };
+                }
+            }
+
+            if (!next) {
+                return { kind: 'done', block: null, blockIndex: -1, cycleIndex: 0, cycleCount: 0, start: ts, end: null, nextBlock: null };
+            }
+
+            // Idle between blocks. The wake-up is whichever comes first, the
+            // next block or the start of a comms window.
+            const nextComm = windows.find((w) => w.start > ts);
+            const until = Math.min(nextBlockStart, nextComm ? nextComm.start : Infinity);
+            return { kind: 'idle', block: null, blockIndex: -1, cycleIndex: 0, cycleCount: 0, start: ts, end: until, nextBlock: next };
+        }
+
+        // === PLAN-PURE-END ===================================================
+
+        /**
+         * READ THE HASH BEFORE ANYTHING ELSE. Called at parse time, above
+         * init(), and this ordering is load-bearing:
+         *
+         * the Spotify PKCE redirect leaves this page and comes back to
+         * REDIRECT_URI, which is origin + pathname — no fragment. A payload
+         * still sitting in the hash when the user connects Spotify is gone for
+         * good. So the hash is banked into localStorage the moment the page
+         * parses, and stripped from the URL; every other line of plan code
+         * reads localStorage and never window.location.hash.
+         */
+        function capturePlanFromHash() {
+            const hash = window.location.hash || '';
+            const match = hash.match(/[#&]plan=([^&]+)/);
+            if (!match) return;
+
+            // Strip it whatever happens next — a bad payload must not survive
+            // to be re-read on the next load, or a reload after OAuth.
+            const strip = () => {
+                try {
+                    window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+                } catch (e) {}
+            };
+
+            let plan = null;
+            try {
+                plan = decodePlanPayload(match[1]);
+            } catch (e) {
+                planNote = 'A plan arrived from Cockpit but was ignored: it could not be read. Running as a normal timer.';
+                strip();
+                return;
+            }
+
+            const verdict = validatePlanPayload(plan, Date.now());
+            if (!verdict.ok) {
+                planNote = 'A plan arrived from Cockpit but was ignored: ' + verdict.why + '. Running as a normal timer.';
+                strip();
+                return;
+            }
+
+            try {
+                localStorage.setItem(PLAN_PAYLOAD_KEY, JSON.stringify(plan));
+                localStorage.setItem(PLAN_COMM_SLOTS_KEY, JSON.stringify(planCommSlotsFromPayload(plan)));
+            } catch (e) {
+                planNote = 'A plan arrived from Cockpit but could not be saved, so it was ignored. Running as a normal timer.';
+            }
+            strip();
+        }
+
+        /**
+         * The payload's comms windows as {hour, minute, duration} — the shape
+         * the existing slot reader already understands.
+         *
+         * Written to plan_comm_slots, NEVER to comm_slots. The user's own slots
+         * are their configuration and must come back untouched the moment plan
+         * mode is left.
+         */
+        function planCommSlotsFromPayload(plan) {
+            return ((plan && plan.comms) || []).map((c) => {
+                const start = new Date(c.start);
+                const end = new Date(c.end);
+                const duration = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
+                return { hour: start.getHours(), minute: start.getMinutes(), duration: duration };
+            }).filter((s) => Number.isFinite(s.hour) && Number.isFinite(s.minute));
+        }
+
+        function getPlanCommSlots() {
+            try {
+                const raw = localStorage.getItem(PLAN_COMM_SLOTS_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        /**
+         * The slots the timer should actually honour. Plan mode prefers the
+         * plan's own windows; normal mode reads the user's configured rows.
+         * Deliberately NOT folded into getCommSlots(), which is also what
+         * saveCommSlotsConfig writes back from — routing plan slots through
+         * that would overwrite the user's own list with Cockpit's.
+         */
+        function getEffectiveCommSlots() {
+            return planMode ? getPlanCommSlots() : getCommSlots();
+        }
+
+        /** Load and validate a stored plan. Returns true if plan mode is on. */
+        function loadStoredPlan() {
+            let stored = null;
+            try {
+                const raw = localStorage.getItem(PLAN_PAYLOAD_KEY);
+                stored = raw ? JSON.parse(raw) : null;
+            } catch (e) {
+                stored = null;
+            }
+            if (!stored) return false;
+
+            const verdict = validatePlanPayload(stored, Date.now());
+            if (!verdict.ok) {
+                // Yesterday's plan quietly running today's clock would be worse
+                // than no plan at all, so it is discarded and said out loud.
+                clearPlanStorage();
+                planNote = 'The saved plan was dropped: ' + verdict.why + '. Running as a normal timer.';
+                return false;
+            }
+
+            planData = stored;
+            planMode = true;
+            return true;
+        }
+
+        function clearPlanStorage() {
+            localStorage.removeItem(PLAN_PAYLOAD_KEY);
+            localStorage.removeItem(PLAN_COMM_SLOTS_KEY);
+        }
+
+        function renderPlanNote() {
+            if (planNote) {
+                planNoteEl.textContent = planNote;
+                planNoteEl.classList.add('show');
+            } else {
+                planNoteEl.classList.remove('show');
+            }
+        }
+
+        /** Paint the plan panel. `state` null means "loaded but not started". */
+        function renderPlanPanel(state) {
+            if (!planMode || !planData) {
+                planSection.classList.remove('show');
+                return;
+            }
+            planSection.classList.add('show');
+            planDateEl.textContent = planData.date + ' · ' + planData.blocks.length +
+                (planData.blocks.length === 1 ? ' block' : ' blocks');
+
+            if (!state) {
+                const first = planData.blocks[0];
+                planNowTitleEl.textContent = 'Plan loaded';
+                planNowMetaEl.textContent = first
+                    ? 'First block ' + hhmm(Date.parse(first.start)) + '–' + hhmm(Date.parse(first.end))
+                    : 'Nothing left in today’s plan';
+                planCycleEl.textContent = 'Press start to run it.';
+                planNextEl.textContent = '';
+                return;
+            }
+
+            if (state.kind === 'done') {
+                planNowTitleEl.textContent = 'Plan complete';
+                planNowMetaEl.textContent = 'Every block in today’s plan has been run.';
+                planCycleEl.textContent = '';
+                planNextEl.textContent = '';
+                return;
+            }
+
+            const nextLine = state.nextBlock
+                ? 'Next: ' + state.nextBlock.title + ' at ' + hhmm(Date.parse(state.nextBlock.start))
+                : 'Nothing after this.';
+
+            if (state.kind === 'idle' || state.kind === 'comm') {
+                planNowTitleEl.textContent = state.kind === 'comm' ? 'Communication slot' : 'Between blocks';
+                planNowMetaEl.textContent = state.end && Number.isFinite(state.end)
+                    ? 'Until ' + hhmm(state.end)
+                    : '';
+                planCycleEl.textContent = state.kind === 'comm'
+                    ? 'Emails and messages — from the plan’s own comms windows.'
+                    : 'Music stopped.';
+                planNextEl.textContent = nextLine;
+                return;
+            }
+
+            // focus / break / quiet all belong to a block by construction.
+            if (!state.block) return;
+            planNowTitleEl.textContent = state.block.title;
+            planNowMetaEl.textContent = state.block.kind + ' · ' +
+                hhmm(Date.parse(state.block.start)) + '–' + hhmm(Date.parse(state.block.end));
+            if (state.kind === 'quiet') {
+                planCycleEl.innerHTML = '<strong>Quiet block</strong> — no cycles, no music.';
+            } else {
+                const mins = Math.max(1, Math.round((state.end - state.start) / 60000));
+                planCycleEl.innerHTML = '<strong>Cycle ' + (state.cycleIndex + 1) + ' of ' + state.cycleCount +
+                    '</strong> · ' + (state.kind === 'focus' ? 'focus' : 'break') + ' ' + mins +
+                    ' min · until ' + hhmm(state.end);
+            }
+            planNextEl.textContent = nextLine;
+        }
+
+        /** Where plan mode gets its notification wording. */
+        function planNotificationFor(state) {
+            if (state.kind === 'focus') return ['Focus block done', 'Time for a break'];
+            if (state.kind === 'break') return ['Break over', 'Back to it'];
+            if (state.kind === 'quiet') return ['Block finished', state.nextBlock ? 'Next: ' + state.nextBlock.title : 'Plan complete'];
+            if (state.kind === 'comm') return ['Comms slot over', 'Back to the plan'];
+            return ['Next block starting', state.nextBlock ? state.nextBlock.title : 'Back to the plan'];
+        }
+
+        /**
+         * Run whatever should be running now, and set ONE timer for the next
+         * boundary. Safe to call at any moment — on start, at a boundary, and
+         * on every visibilitychange — because it recomputes from absolute
+         * timestamps rather than trusting elapsed time.
+         *
+         * The segment key is what stops a re-sync being a restart: waking the
+         * phone mid-block must not re-announce the block or start the playlist
+         * again from track one.
+         */
+        async function planSync() {
+            if (!planMode || !planData || !isInSession) return;
+
+            if (planTimeout) {
+                clearTimeout(planTimeout);
+                planTimeout = null;
+            }
+
+            const now = Date.now();
+            const state = planStateAt(now, planData, getPlanCommSlots());
+            const key = state.kind + ':' + state.blockIndex + ':' + state.cycleIndex + ':' + state.start;
+            const changed = key !== planCurrentKey;
+            planCurrentKey = key;
+
+            renderPlanPanel(state);
+
+            if (state.kind === 'done') {
+                cancelNotification();
+                stopProgressAnimation();
+                await pausePlayback();
+                isInSession = false;
+                currentPhase = null;
+                startBtn.style.display = 'block';
+                stopBtn.style.display = 'none';
+                focusDurationInput.disabled = false;
+                breakDurationInput.disabled = false;
+                updateStatus('PLAN', 'Plan complete', 'Every block has been run', 'idle');
+                if (changed) speak('Plan complete');
+                return;
+            }
+
+            // Music only changes when the segment does.
+            if (changed) {
+                if (state.kind === 'focus') {
+                    // Try Again on the no-device modal must re-enter the whole
+                    // flow, not just this segment.
+                    noDeviceRetryFn = () => planStart();
+                    const playbackOk = await startPlayback(focusPlaylistId, 'focus');
+                    if (!playbackOk) {
+                        await planAbort();
+                        return;
+                    }
+                    hideError();
+                } else if (state.kind === 'break' || state.kind === 'comm') {
+                    // Silent on no device, exactly like the normal break
+                    // transition: a missing device mid-plan must not pop a
+                    // modal or stop the day.
+                    await startPlayback(breakPlaylistId, 'break', true);
+                } else {
+                    // idle and quiet are both silence by design.
+                    await pausePlayback();
+                }
+            }
+
+            currentPhase = 'plan';
+
+            // Progress runs against the SEGMENT'S OWN start, not "now", so the
+            // bar is correct after the screen has been off.
+            sessionStartTime = state.start;
+            sessionDuration = Math.max(1000, state.end - state.start);
+            if (progressInterval) clearInterval(progressInterval);
+            progressInterval = setInterval(updateProgress, 1000);
+            updateProgress();
+
+            if (changed) {
+                if (state.kind === 'focus') {
+                    speak(state.cycleIndex === 0 ? state.block.title : 'Focus, ' + Math.round((state.end - state.start) / 60000) + ' minutes');
+                } else if (state.kind === 'break') {
+                    playNotificationSound();
+                    setTimeout(() => speak('Break, ' + Math.round((state.end - state.start) / 60000) + ' minutes'), 500);
+                } else if (state.kind === 'quiet') {
+                    speak(state.block.title);
+                } else if (state.kind === 'comm') {
+                    speak('Communication slot');
+                }
+            }
+
+            const remaining = Math.max(0, state.end - now);
+            const label = {
+                focus: ['FOCUS · PLAN', state.block ? state.block.title : 'Focus', 'Cycle ' + (state.cycleIndex + 1) + ' of ' + state.cycleCount + ' · until ' + hhmm(state.end), 'focus'],
+                break: ['BREAK', 'Breather', 'Back at ' + hhmm(state.end), 'break'],
+                quiet: ['QUIET BLOCK', state.block ? state.block.title : 'Quiet', 'Until ' + hhmm(state.end) + ' · no music', 'break'],
+                comm: ['COMMUNICATION', 'Communication Slot', 'Until ' + hhmm(state.end), 'break'],
+                idle: ['PLAN', 'Between blocks', state.nextBlock ? 'Next block at ' + hhmm(state.end) : 'Waiting', 'idle']
+            }[state.kind];
+            if (label) updateStatus(label[0], label[1], label[2], label[3]);
+
+            // Rescheduled per segment, and cancelled in stopSession, or two
+            // notifications fire across one cycle boundary.
+            cancelNotification();
+            const note = planNotificationFor(state);
+            scheduleNotification(note[0], note[1], remaining);
+
+            // The small margin matters: firing exactly on the boundary can land
+            // on the same millisecond and resolve to the segment just finished.
+            planTimeout = setTimeout(() => {
+                planTimeout = null;
+                planSync();
+            }, remaining + 250);
+        }
+
+        /** Start (or re-enter) the plan. Only ever from a user gesture. */
+        async function planStart() {
+            if (!planMode || !planData) return;
+            isInSession = true;
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'block';
+            focusDurationInput.disabled = true;
+            breakDurationInput.disabled = true;
+            planCurrentKey = null;
+            await planSync();
+        }
+
+        /** Playback refused (no device). Same climb-down as startFocusSession. */
+        async function planAbort() {
+            if (planTimeout) {
+                clearTimeout(planTimeout);
+                planTimeout = null;
+            }
+            cancelNotification();
+            stopProgressAnimation();
+            planCurrentKey = null;
+            currentPhase = null;
+            isInSession = false;
+            startBtn.style.display = 'block';
+            stopBtn.style.display = 'none';
+            focusDurationInput.disabled = false;
+            breakDurationInput.disabled = false;
+            updateStatus('PLAN', 'Plan paused', 'Start Spotify on a device, then press start', 'idle');
+            renderPlanPanel(null);
+        }
+
+        /**
+         * Leave plan mode: drop the payload and the plan's comms windows, and
+         * go back to the normal timer in place — no reload, so there is no way
+         * to bounce off a hash that is already gone.
+         */
+        async function leavePlanMode() {
+            if (isInSession) await stopSession();
+            clearPlanStorage();
+            planMode = false;
+            planData = null;
+            planCurrentKey = null;
+            planSection.classList.remove('show');
+            planNote = '';
+            renderPlanNote();
+            // The user's OWN slots were never touched, so this simply puts them
+            // back on screen.
+            loadCommSlotsConfig();
+            updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
+        }
+
+        // Runs at parse time — BEFORE init(), and therefore before any OAuth
+        // handling. See capturePlanFromHash for why that ordering is not
+        // negotiable.
+        capturePlanFromHash();
+
         // --- Session persistence ---
 
         const SESSION_PERSIST_KEY = 'active_session_state';
 
         function saveSessionState() {
+            // Plan mode needs no session snapshot: the plan itself is in
+            // localStorage and every position is derived from absolute
+            // timestamps, so planSync() alone restores the day exactly.
+            if (planMode) return;
             if (!isInSession || !currentPhase || currentPhase === 'comm') return;
             try {
                 localStorage.setItem(SESSION_PERSIST_KEY, JSON.stringify({
@@ -981,13 +1653,22 @@
             const urlParams = new URLSearchParams(window.location.search);
             const code = urlParams.get('code');
 
+            // The hash was banked by capturePlanFromHash() at parse time; this
+            // only reads what was stored, and decides whether it is still today's.
+            loadStoredPlan();
+
             if (code) {
                 // Exchange code for access token, then proceed to app
                 await exchangeCodeForToken(code);
                 window.history.replaceState({}, document.title, window.location.pathname);
             } else {
+                // A plan is an explicit instruction to run TODAY'S plan, so it
+                // outranks a half-finished normal session from earlier. The
+                // stale snapshot goes, rather than sitting there to resurface.
+                if (planMode) clearSessionState();
+
                 // Check for a persisted session before the normal service flow
-                const savedStateRaw = localStorage.getItem(SESSION_PERSIST_KEY);
+                const savedStateRaw = planMode ? null : localStorage.getItem(SESSION_PERSIST_KEY);
                 let recovered = false;
                 if (savedStateRaw) {
                     try {
@@ -1027,6 +1708,10 @@
             loginSection.classList.remove('show');
             appSection.classList.add('show');
             loadCommSlotsConfig();
+            // The config rows above are the user's OWN slots either way — plan
+            // mode reads its windows from plan_comm_slots and never writes here.
+            renderPlanNote();
+            renderPlanPanel(null);
             if ('Notification' in window && Notification.permission === 'default') {
                 Notification.requestPermission();
             }
@@ -1663,14 +2348,17 @@
 
         // Check if we're in an active communication slot
         function getActiveCommSlot() {
-            if (!commSlotsEnabledCheckbox.checked) return null;
+            // In plan mode the plan's own windows are the answer, and they are
+            // on whenever there are any — the checkbox governs the user's
+            // hand-configured slots, which plan mode is not using.
+            if (!planMode && !commSlotsEnabledCheckbox.checked) return null;
 
             const now = new Date();
             const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-            for (const slot of getCommSlots()) {
+            for (const slot of getEffectiveCommSlots()) {
                 const slotStart = slot.hour * 60 + slot.minute;
-                const slotEnd = slotStart + 30;
+                const slotEnd = slotStart + (slot.duration || 30);
 
                 if (currentMinutes >= slotStart && currentMinutes < slotEnd) {
                     return {
@@ -1902,6 +2590,14 @@
                 commCheckInterval = null;
             }
 
+            // Plan mode's single boundary timer. Left running it would fire
+            // into a stopped session and start music on its own.
+            if (planTimeout) {
+                clearTimeout(planTimeout);
+                planTimeout = null;
+            }
+            planCurrentKey = null;
+
             currentCommSlot = null;
             currentPhase = null;
             cancelNotification();
@@ -1920,8 +2616,15 @@
             
             startBtn.style.display = 'block';
             stopBtn.style.display = 'none';
-            
+
             updateStatus('STATUS', 'Ready to Focus', 'Click start to begin your session', 'idle');
+
+            // Stopping a run is not leaving plan mode — the plan stays loaded
+            // and Start re-enters it at whatever block the clock is in now.
+            if (planMode) {
+                updateStatus('PLAN', 'Plan paused', 'Press start to pick the plan up again', 'idle');
+                renderPlanPanel(null);
+            }
         }
         
         // Toggle call mode
@@ -1971,10 +2674,15 @@
         
         // Event listeners
         startBtn.addEventListener('click', () => {
-            if (!inCallMode) {
+            if (inCallMode) return;
+            if (planMode) {
+                planStart();
+            } else {
                 startFocusSession();
             }
         });
+
+        leavePlanBtn.addEventListener('click', () => leavePlanMode());
         stopBtn.addEventListener('click', () => stopSession());
         callBtn.addEventListener('click', toggleCallMode);
 
@@ -2062,6 +2770,15 @@
                     showError('Session expired. Please reconnect to Spotify and start again.');
                     return;
                 }
+            }
+
+            // Plan mode does its own catch-up: planSync() re-derives which
+            // block and which cycle the clock is in from absolute timestamps,
+            // which is the same answer whether the screen was off for a minute
+            // or an hour. It also re-arms the notification for that cycle.
+            if (planMode) {
+                await planSync();
+                return;
             }
 
             // Time-based catch-up: recalculate how much time has actually passed

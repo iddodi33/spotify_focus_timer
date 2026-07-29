@@ -102,6 +102,92 @@ times and is the most common bug in this project:
 - session_count_[date] — daily session counter
 - focus_session_start — absolute timestamp of current focus session start
 - break_session_start — absolute timestamp of current break session start
+- plan_payload — the validated plan pushed in from Cockpit (see Plan Mode)
+- plan_comm_slots — the plan's own comms windows, as
+  [{hour, minute, duration}]. SEPARATE from comm_slots on purpose — see below
+
+## Plan Mode (payload from Cockpit)
+
+Cockpit (the task/day-planner app) opens this page with a day's blocks in the
+URL hash. One way only: Cockpit → timer. This page has no backend and
+Cockpit's database is locked to two owner emails, so nothing can be sent back.
+Do not add a return path, a callback or a shared token.
+
+### The hash-before-OAuth rule — READ THIS FIRST
+`capturePlanFromHash()` is called at SCRIPT PARSE TIME, above `init()` and
+before any OAuth handling. This ordering is load-bearing and is the thing a
+future change is most likely to break:
+
+- The Spotify PKCE redirect leaves this page and returns to REDIRECT_URI, which
+  is `origin + pathname` — **no fragment**. A payload still sitting in
+  `window.location.hash` when the user connects Spotify is gone for good.
+- So the hash is decoded and banked into `plan_payload` immediately, then
+  stripped from the URL with `history.replaceState`.
+- **Everything after that reads localStorage. Nothing else may read
+  `window.location.hash`.** If plans start vanishing when the user reconnects
+  Spotify, check this ordering first.
+
+### Payload
+`#plan=<base64url of UTF-8 JSON>`:
+```
+{ v: 1, date: "YYYY-MM-DD", tz: "Europe/Dublin",
+  blocks: [{ title, kind, start, end, cycles: [[work, break], ...] }],
+  comms:  [{ start, end }, ...] }
+```
+`start`/`end` are absolute ISO instants; cycles are whole minutes.
+
+Decoding is **not** plain `atob()`: swap `-`→`+` and `_`→`/`, re-pad to a
+multiple of 4 with `=`, `atob()` to bytes, then `new TextDecoder().decode()`.
+Block titles are real sentences containing em dashes and fadas — skipping the
+TextDecoder step corrupts them, and skipping the character swap makes `atob`
+throw.
+
+### Rules
+- **Never recompute the cycles.** The 85/15 split is Cockpit's job and is unit
+  tested there. This page runs what arrives.
+- **A block with an empty `cycles` array is an idle span, not an error.**
+  Domestic blocks arrive that way deliberately: show the title and the time
+  range, run no cycles, play no music, move on when it ends.
+- **Fail visibly, never half-apply.** A payload that does not parse, is the
+  wrong `v`, or is not today's local date is refused whole, with a one-line
+  reason in `#plan-note`, and the timer runs normally. A stored plan is
+  re-validated on every load, so yesterday's plan can never run today.
+- **Never write `comm_slots`.** The plan's windows go to `plan_comm_slots`;
+  `getEffectiveCommSlots()` prefers them while plan mode is on. The user's own
+  slots must come back untouched on leaving plan mode. Note this is why plan
+  slots are NOT routed through `getCommSlots()` — `saveCommSlotsConfig()`
+  writes back from that function and would overwrite the user's list.
+- **No meeting handling.** Meetings never stop the music; the manual In Call
+  Mode button is the only interruption.
+
+### How it runs
+- `planStateAt(ts, plan, slots)` answers "what should be happening at this
+  instant" from ABSOLUTE timestamps: focus / break / quiet / comm / idle / done.
+  Nothing accumulates elapsed time, which is what makes screen-off recovery
+  correct.
+- `planSync()` runs that answer: sets the music, the progress bar, the status,
+  one notification and ONE timer (`planTimeout`) for the next boundary. It is
+  safe to call at any moment — start, boundary, visibilitychange.
+- A **segment key** (`kind:block:cycle:start`) guards the transitions. A
+  re-sync of the same segment must not restart the playlist or re-announce the
+  block; only a changed key triggers playback and speech.
+- `planTimeout` MUST be cleared in `stopSession()` like every other timer, and
+  the notification is rescheduled per cycle — otherwise two fire across one
+  cycle boundary.
+- Stop ≠ Leave. "Stop Session" ends the run and keeps the plan loaded; "Leave
+  plan mode" clears both plan keys and restores the normal timer in place, with
+  no reload.
+- Plan mode skips `saveSessionState()`/session recovery entirely: the plan plus
+  absolute timestamps already restore the day exactly, so a stale session
+  snapshot is cleared rather than left to resurface.
+
+### Testing plan mode
+The pure logic sits between `// === PLAN-PURE-START` and `// === PLAN-PURE-END`
+markers so it can be extracted and run under Node without a browser (decode,
+validation, segment splitting, and the state machine across a whole day). Keep
+that region free of DOM, network and `Date.now()` — every function takes the
+instant it needs. Build a payload with the same encoder Cockpit uses, append
+`#plan=…` to the file URL, and load it.
 
 ### Timer Logic
 - All session times stored as absolute timestamps (Date.now()) not countdowns
@@ -110,7 +196,8 @@ times and is the most common bug in this project:
 - startBreakSession() → stores break_session_start, calls startPlayback('break')
 - stopSession() — MUST clear ALL of these or they leak:
   sessionTimer, progressInterval, commCheckInterval,
-  transitionPlaybackTimeout, transitionNextSessionTimeout
+  transitionPlaybackTimeout, transitionNextSessionTimeout, planTimeout
+  (and cancelNotification(), or notifications double-fire)
 - startPlayback(type) returns true/false
   NEVER start timer if startPlayback() returns false
 
@@ -155,7 +242,10 @@ times and is the most common bug in this project:
   404 NO_ACTIVE_DEVICE if you skip this, even when the desktop app
   is open. This has broken once already.
 - CSS !important is REQUIRED on all section show/hide rules — check this 
-  first whenever a section is not visible
+  first whenever a section is not visible. This now covers #plan-section and
+  #plan-note as well as the three original sections
+- Plan mode: the hash MUST be read before OAuth handling (see Plan Mode). A
+  plan that vanishes when the user reconnects Spotify is this rule broken
 - startPlayback() must return true before starting any timer
 - All intervals and timeouts must be cleared in stopSession()
 - Token refresh must happen before every Spotify API call

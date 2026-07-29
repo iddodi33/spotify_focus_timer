@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/spotify-focus-timer-pkce.html)",
+      "Bash(python -m http.server 8080)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/spotify-focus-timer.html)",
+      "Bash(git -C /c/coding_projects/spotify_focus_timer/spotify_focus_timer log --oneline --all -- spotify-focus-timer-pkce.html)",
+      "Bash(git -C /c/coding_projects/spotify_focus_timer/spotify_focus_timer show 5e4c8c3:spotify-focus-timer-pkce.html)",
+      "Bash(git -C /c/coding_projects/spotify_focus_timer/spotify_focus_timer checkout 5e4c8c3 -- spotify-focus-timer-pkce.html)",
+      "Bash(git -C /c/coding_projects/spotify_focus_timer/spotify_focus_timer status)",
+      "Bash(git -C /c/coding_projects/spotify_focus_timer/spotify_focus_timer diff)",
+      "Bash(git -C /c/coding_projects/spotify_focus_timer/spotify_focus_timer add manifest.json spotify-focus-timer-pkce.html spotify-focus-timer.html)",
+      "Bash(git -C:*)",
+      "Bash(git add:*)",
+      "Bash(git rebase:*)",
+      "Bash(git push:*)",
+      "Bash(GIT_EDITOR=true git rebase --continue)"
+    ]
+  }
+}
