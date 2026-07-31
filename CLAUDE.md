@@ -131,10 +131,27 @@ future change is most likely to break:
 `#plan=<base64url of UTF-8 JSON>`:
 ```
 { v: 1, date: "YYYY-MM-DD", tz: "Europe/Dublin",
-  blocks: [{ title, kind, start, end, cycles: [[work, break], ...] }],
+  blocks: [{ title, kind, start, end, spoken?, cycles: [[work, break], ...] }],
   comms:  [{ start, end }, ...] }
 ```
 `start`/`end` are absolute ISO instants; cycles are whole minutes.
+
+**`spoken` (optional)** — a short task name, e.g. `"the Marmanet draft"`. When a
+**work block** begins, the timer speaks `"Start working on <spoken>"` alongside the
+existing transition announcement, and shows the same sentence in `#plan-task` on the plan
+panel for as long as that block runs. Rules, all covered by tests in the PLAN-PURE region:
+
+- **Once per block, not once per cycle.** `planCurrentBlockIndex` tracks the running
+  block; a new cycle inside the same block re-arms the timer without re-announcing. Three
+  "start working on X"s in a 90-minute anchor would be nagging, not useful.
+- **Work blocks only.** A `domestic` block is lunch and the dishes; "start working on" is
+  the wrong sentence for it.
+- **Absent is a valid payload.** No `spoken` means the block is announced exactly as it
+  was before the field existed, with no task line and nothing shown on the panel.
+- **Never speak an empty string, and never fall back to parsing `title`.** Empty,
+  whitespace, and non-string all mean say nothing. `title` is an intent sentence written
+  to be read ("By 11:00, send the Marmanet draft to Eamonn"), not a phrase to append to
+  "Start working on" — guessing a task out of it is worse than silence.
 
 Decoding is **not** plain `atob()`: swap `-`→`+` and `_`→`/`, re-pad to a
 multiple of 4 with `=`, `atob()` to bytes, then `new TextDecoder().decode()`.

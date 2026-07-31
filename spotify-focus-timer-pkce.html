@@ -346,6 +346,10 @@
         #plan-section.show { display: block !important; }
         #plan-note { display: none !important; }
         #plan-note.show { display: block !important; }
+        /* The spoken task line. Hidden unless the running block carries one —
+           same !important rule as every other conditional block here. */
+        #plan-task { display: none !important; }
+        #plan-task.show { display: block !important; }
 
         #plan-section {
             background: rgba(29, 185, 84, 0.07);
@@ -414,6 +418,16 @@
         }
 
         .plan-cycle strong { color: var(--accent); font-weight: 500; }
+
+        #plan-task {
+            font-size: 0.92rem;
+            color: var(--text);
+            font-weight: 500;
+            margin-top: 0.5rem;
+            padding: 0.5rem 0.7rem;
+            background: rgba(29, 185, 84, 0.1);
+            border-radius: 10px;
+        }
 
         .plan-hint {
             font-size: 0.72rem;
@@ -709,6 +723,9 @@
                     </div>
                     <div id="plan-now-title" class="plan-now-title"></div>
                     <div id="plan-now-meta" class="plan-now-meta"></div>
+                    <!-- What was announced out loud when this block began, kept
+                         on screen for as long as the block runs. -->
+                    <div id="plan-task"></div>
                     <div id="plan-cycle" class="plan-cycle"></div>
                     <div id="plan-next" class="plan-next"></div>
                     <div class="plan-hint">
@@ -861,6 +878,7 @@
         let planData = null;        // the validated payload
         let planTimeout = null;     // the ONE timer plan mode uses; cleared in stopSession
         let planCurrentKey = null;  // which segment is running, so a re-sync is not a restart
+        let planCurrentBlockIndex = null; // which BLOCK is running, so the task line is said once
         let planNote = '';          // why an arriving plan was ignored, if it was
         
         // DOM Elements
@@ -896,6 +914,7 @@
         const planNowTitleEl = document.getElementById('plan-now-title');
         const planNowMetaEl = document.getElementById('plan-now-meta');
         const planCycleEl = document.getElementById('plan-cycle');
+        const planTaskEl = document.getElementById('plan-task');
         const planNextEl = document.getElementById('plan-next');
         const leavePlanBtn = document.getElementById('leave-plan-btn');
         
@@ -1041,6 +1060,29 @@
             if (!trimmed.length) return quiet;
             trimmed[trimmed.length - 1].end = endMs;
             return trimmed;
+        }
+
+        /**
+         * What to say out loud for a block, from the payload's `spoken` field.
+         * Empty string when there is nothing safe to say.
+         *
+         * `spoken` is OPTIONAL and always has been: a payload without it is
+         * valid, and a block without it is announced exactly as before, with no
+         * task line. There is deliberately NO fallback to `title` — the title
+         * is an intent sentence written to be read ("By 11:00, send the
+         * Marmanet draft to Eamonn"), not a thing to append to "Start working
+         * on", and parsing a task out of it would be guessing. Silence is the
+         * correct answer when Cockpit did not supply one.
+         */
+        function blockSpoken(block) {
+            const raw = block && block.spoken;
+            return typeof raw === 'string' ? raw.trim() : '';
+        }
+
+        /** The announcement for a block that is starting, or '' for none. */
+        function blockAnnouncement(block) {
+            const spoken = blockSpoken(block);
+            return spoken ? 'Start working on ' + spoken : '';
         }
 
         /** The plan's comms windows as instants on the day of `ts`. */
@@ -1247,6 +1289,12 @@
             planDateEl.textContent = planData.date + ' · ' + planData.blocks.length +
                 (planData.blocks.length === 1 ? ' block' : ' blocks');
 
+            // The task line follows the BLOCK, not the segment, so it stays up
+            // through the breaks inside a block and clears between blocks.
+            const announcement = state && state.block ? blockAnnouncement(state.block) : '';
+            planTaskEl.textContent = announcement;
+            planTaskEl.classList.toggle('show', Boolean(announcement));
+
             if (!state) {
                 const first = planData.blocks[0];
                 planNowTitleEl.textContent = 'Plan loaded';
@@ -1381,6 +1429,13 @@
             progressInterval = setInterval(updateProgress, 1000);
             updateProgress();
 
+            // A NEW BLOCK, not merely a new segment. The task line is said when
+            // the block begins and not again — hearing "start working on X"
+            // at the top of every cycle is nagging, not useful, and there are
+            // three of them in a 90-minute anchor.
+            const startingBlock =
+                state.blockIndex >= 0 && state.blockIndex !== planCurrentBlockIndex;
+
             if (changed) {
                 if (state.kind === 'focus') {
                     speak(state.cycleIndex === 0 ? state.block.title : 'Focus, ' + Math.round((state.end - state.start) / 60000) + ' minutes');
@@ -1392,7 +1447,20 @@
                 } else if (state.kind === 'comm') {
                     speak('Communication slot');
                 }
+
+                // Alongside the transition above, not instead of it. Work
+                // blocks only: a quiet block is lunch and the dishes, and
+                // "start working on" is the wrong sentence for it. Queued as
+                // its own utterance, so the Speech API plays it straight after.
+                if (startingBlock && state.kind === 'focus') {
+                    const announcement = blockAnnouncement(state.block);
+                    if (announcement) speak(announcement);
+                }
             }
+
+            // Only ever advanced while inside a block, so the idle stretch
+            // between two blocks does not count as a block change.
+            if (state.blockIndex >= 0) planCurrentBlockIndex = state.blockIndex;
 
             const remaining = Math.max(0, state.end - now);
             const label = {
@@ -1427,6 +1495,8 @@
             focusDurationInput.disabled = true;
             breakDurationInput.disabled = true;
             planCurrentKey = null;
+            // Pressing start re-announces whichever block the clock is in.
+            planCurrentBlockIndex = null;
             await planSync();
         }
 
@@ -1439,6 +1509,7 @@
             cancelNotification();
             stopProgressAnimation();
             planCurrentKey = null;
+            planCurrentBlockIndex = null;
             currentPhase = null;
             isInSession = false;
             startBtn.style.display = 'block';
@@ -2597,6 +2668,7 @@
                 planTimeout = null;
             }
             planCurrentKey = null;
+            planCurrentBlockIndex = null;
 
             currentCommSlot = null;
             currentPhase = null;
