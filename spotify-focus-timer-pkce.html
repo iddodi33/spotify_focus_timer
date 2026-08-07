@@ -1324,8 +1324,8 @@
                     ? 'Until ' + hhmm(state.end)
                     : '';
                 planCycleEl.textContent = state.kind === 'comm'
-                    ? 'Emails and messages — from the plan’s own comms windows.'
-                    : 'Music stopped.';
+                    ? 'Emails and messages — from the plan’s own comms windows. Focus playlist keeps playing.'
+                    : 'Focus playlist keeps playing.';
                 planNextEl.textContent = nextLine;
                 return;
             }
@@ -1336,7 +1336,7 @@
             planNowMetaEl.textContent = state.block.kind + ' · ' +
                 hhmm(Date.parse(state.block.start)) + '–' + hhmm(Date.parse(state.block.end));
             if (state.kind === 'quiet') {
-                planCycleEl.innerHTML = '<strong>Quiet block</strong> — no cycles, no music.';
+                planCycleEl.innerHTML = '<strong>Quiet block</strong> — no cycles, focus playlist keeps playing.';
             } else {
                 const mins = Math.max(1, Math.round((state.end - state.start) / 60000));
                 planCycleEl.innerHTML = '<strong>Cycle ' + (state.cycleIndex + 1) + ' of ' + state.cycleCount +
@@ -1408,14 +1408,22 @@
                         return;
                     }
                     hideError();
-                } else if (state.kind === 'break' || state.kind === 'comm') {
+                } else if (state.kind === 'break') {
                     // Silent on no device, exactly like the normal break
                     // transition: a missing device mid-plan must not pop a
                     // modal or stop the day.
                     await startPlayback(breakPlaylistId, 'break', true);
                 } else {
-                    // idle and quiet are both silence by design.
-                    await pausePlayback();
+                    // comm, quiet and idle. Quiet and idle used to be silence
+                    // by design; they are not any more — the day now plays
+                    // continuously and only `done` above and the manual call
+                    // button stop anything. Comm plays the FOCUS playlist
+                    // rather than the break one because emails and messages are
+                    // still work.
+                    //
+                    // Silent on no device for the same reason as break: none of
+                    // these three is worth a modal or an aborted day.
+                    await startPlayback(focusPlaylistId, 'focus', true);
                 }
             }
 
@@ -1466,7 +1474,7 @@
             const label = {
                 focus: ['FOCUS · PLAN', state.block ? state.block.title : 'Focus', 'Cycle ' + (state.cycleIndex + 1) + ' of ' + state.cycleCount + ' · until ' + hhmm(state.end), 'focus'],
                 break: ['BREAK', 'Breather', 'Back at ' + hhmm(state.end), 'break'],
-                quiet: ['QUIET BLOCK', state.block ? state.block.title : 'Quiet', 'Until ' + hhmm(state.end) + ' · no music', 'break'],
+                quiet: ['QUIET BLOCK', state.block ? state.block.title : 'Quiet', 'Until ' + hhmm(state.end) + ' · music continues', 'break'],
                 comm: ['COMMUNICATION', 'Communication Slot', 'Until ' + hhmm(state.end), 'break'],
                 idle: ['PLAN', 'Between blocks', state.nextBlock ? 'Next block at ' + hhmm(state.end) : 'Waiting', 'idle']
             }[state.kind];
@@ -2218,6 +2226,20 @@
 
         // Start playback. type = 'focus' | 'break'. silentOnNoDevice skips the modal.
         // Returns true on success, false on failure.
+        //
+        // RESUMING AFTER SILENCE is the fragile case, and it is why short comms
+        // slots used to run with no music even though this function was called
+        // for them: once nothing has played for a while, Spotify Connect lets
+        // the session go idle and the client de-registers, so
+        // /me/player/devices comes back empty (or with nothing is_active) for a
+        // beat while it re-registers. One attempt then resolves null, and on
+        // the silent path that failure was swallowed whole — no modal, no
+        // banner, just a quiet ten minutes.
+        //
+        // So every resume gets a second look: one retry on an empty device
+        // list, and a 404 from /play (the device dropped off Connect between
+        // resolving it and using it) is re-resolved rather than treated as a
+        // hard failure. Focus and comm now recover the same way.
         async function startPlayback(playlistId, type = 'focus', silentOnNoDevice = false) {
             if (!isPremium) {
                 ytPlayUrl(type === 'focus' ? focusYtInput.value : breakYtInput.value);
@@ -2225,32 +2247,49 @@
             }
             await ensureValidToken();
 
-            const deviceId = await resolveActiveDevice(!silentOnNoDevice);
+            // First look never pops the modal — a device that is merely slow to
+            // re-register is not worth interrupting anyone over.
+            let deviceId = await resolveActiveDevice(false);
+            if (deviceId === null) {
+                await new Promise(r => setTimeout(r, 1500));
+                deviceId = await resolveActiveDevice(!silentOnNoDevice);
+            }
             if (deviceId === null) return false;
 
             const body = JSON.stringify({ context_uri: `spotify:playlist:${playlistId}`, position_ms: 0 });
-            const headers = { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
-            const playUrl = `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`;
+            const play = (id) => fetch(`https://api.spotify.com/v1/me/player/play?device_id=${id}`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body
+            });
 
             try {
-                let response = await fetch(playUrl, { method: 'PUT', headers, body });
+                let response = await play(deviceId);
 
                 if (response.status === 401) {
                     const refreshed = await refreshAccessToken();
                     if (!refreshed) return false;
-                    response = await fetch(playUrl, {
-                        method: 'PUT',
-                        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-                        body
-                    });
+                    response = await play(deviceId);
+                }
+
+                // 404 here means "that device is gone", not "that playlist is
+                // gone". Resolving again also transfers playback to whatever is
+                // actually there, so this is the recovery, not just a retry.
+                if (response.status === 404) {
+                    console.warn('[Playback] device vanished between resolve and play, re-resolving');
+                    const retryId = await resolveActiveDevice(!silentOnNoDevice);
+                    if (retryId === null) return false;
+                    response = await play(retryId);
                 }
 
                 if (!response.ok) {
+                    console.warn('[Playback] start failed', response.status);
                     showError('Failed to start playback. Error: ' + response.status);
                     return false;
                 }
                 return true;
             } catch (error) {
+                console.warn('[Playback] start threw', error);
                 showError('Failed to start playback: ' + error.message);
                 return false;
             }
